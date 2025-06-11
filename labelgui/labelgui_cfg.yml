@@ -1,0 +1,73 @@
+# DATA SELECTION
+allowed_cams: [0, 1]
+cam: 0
+min_pose: 0
+max_pose: 10770
+dFrame: 1
+
+# SKETCH
+standard_sketch_file: [
+  "/../../../../data/sketch/20230525_sketch_hellenthal.npy"
+]
+# VIDEOS
+standard_recording_folder: "{storage}/bc_20230524_N_2"
+standard_recording_filenames: [
+  "../bulk/bird_hellenthal_FrontField/20230522_20230525_FlightWindow/20230524-1300/Niqui/front/CADDX000064.MP4",
+  "../bulk/bird_hellenthal_FrontField/20230522_20230525_FlightWindow/20230524-1300/Niqui/back/CADDX000056.MP4"
+]
+
+# LABELS
+standard_labels_file:
+standard_reference_labels_file: True
+
+# DISPLAY
+sketch_zoom_scale: 0.06
+
+# mode activation
+button_fast_labeling_mode_activate: True
+button_centric_view_mode_activate: False
+button_sketch_mode_activate: True
+# save settings
+exit_save_labels: True
+auto_save: True
+auto_save_N0: int(10)
+auto_save_N1: int(100)
+# BUTTONS
+# general
+button_load_recording: False
+button_load_labels: False
+button_save_labels: True
+button_load_sketch: False
+button_sketch_mode: False
+button_fast_labeling_mode: False
+button_centric_view_mode: False
+button_reprojection_mode: False
+# labels
+button_insert: False
+button_remove: False
+button_label_3d: False
+button_previous_label: True
+button_next_label: True
+# 3d
+button_up: False
+button_right: False
+button_down: False
+button_left: False
+# 2d
+button_next: True
+button_previous: True
+# 3d and 2d
+button_home: True
+button_zoom: True
+button_pan: True
+# FIELDS
+field_dx: False
+field_dy: False
+field_vmin: True
+field_vmax: True
+field_labels_3d: False
+field_dxyz: False
+field_current_pose: True
+field_dFrame: False
+# LISTS
+list_fast_labeling_mode: True
