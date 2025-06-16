@@ -1,5 +1,5 @@
 from PyQt5.QtGui import QIntValidator
-from PyQt5.QtWidgets import (QFrame, QGridLayout, QLabel, QLineEdit,
+from PyQt5.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
                              QListWidget, QPushButton, QComboBox, QAbstractItemView, QDockWidget)
 
 
@@ -8,25 +8,25 @@ class ControlsDock(QDockWidget):
     def __init__(self):
         # Setup widget
         super().__init__("Controls")
-
         self.widgets = {
             'labels': {},
             'buttons': {},
-            'fields': {}
+            'fields': {},
+            'lists': {}
         }
         self.layout_grid = QGridLayout()
 
         row = 0
-        self.add_label_to_grid("dx:", row, 1, "dx")
-        self.add_label_to_grid("dy:", row, 2, "dy")
+        self.add_label("dx:", row, 1, "dx")
+        self.add_label("dy:", row, 2, "dy")
 
         row += 1
         self.add_field(row, 1, "dx")
         self.add_field(row, 2, "dy")
 
         row += 1
-        self.add_label_to_grid("vmin:", row, 1, "vmin")
-        self.add_label_to_grid("vmax:", row, 2, "vmax")
+        self.add_label("vmin:", row, 1, "vmin")
+        self.add_label("vmax:", row, 2, "vmax")
 
         row += 1
         self.add_field(row, 1, "vmin")
@@ -60,7 +60,9 @@ class ControlsDock(QDockWidget):
         row += 1
         self.add_label("", row, 0, "labeler")
 
-        self.setLayout(self.layout_grid)
+        self.main_widget = QWidget()
+        self.main_widget.setLayout(self.layout_grid)
+        self.setWidget(self.main_widget)
         self.setStyleSheet("background-color: white;")
 
     def add_label(self, label_text:str, row_idx: int, col_idx: int, label_key=None):
