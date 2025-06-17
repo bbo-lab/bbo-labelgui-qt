@@ -8,6 +8,8 @@ class ControlsDock(QDockWidget):
     def __init__(self):
         # Setup widget
         super().__init__("Controls")
+        self.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+
         self.widgets = {
             'labels': {},
             'buttons': {},

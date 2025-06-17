@@ -1,0 +1,519 @@
+#!/usr/bin/env python3
+import hashlib
+
+import numpy as np
+import os
+import sys
+import time
+from typing import List, Dict, Optional
+import logging
+
+from PyQt5 import QtCore
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QCursor
+from PyQt5.QtWidgets import QMdiArea, \
+    QMdiSubWindow, \
+    QApplication, \
+    QFrame, \
+    QFileDialog, \
+    QGridLayout, \
+    QLabel, \
+    QLineEdit, \
+    QListWidget, \
+    QMainWindow, \
+    QPushButton, QComboBox
+
+from matplotlib import colors as mpl_colors
+
+from pathlib import Path
+import paho.mqtt.client as mqtt
+import pyqtgraph as pg
+
+from bbo import label_lib, path_management as bbo_pm
+from bbo.yaml import load as yaml_load
+import svidreader
+
+from labelgui.misc import archive_cfg, read_video_meta
+from labelgui.select_user import SelectUserWindow
+from labelgui.ui import ControlsDock, SketchDock
+
+logger = logging.getLogger(__name__)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, drive: Path, file_config=None, parent=None, sync:str|bool=False):
+        super(MainWindow, self).__init__(parent)
+
+        self.user = None
+        self.drive = drive
+        self.cfg = {}
+        self.file_config =None
+        self.mqtt_client = None
+
+        self.cameras: List[Dict] = []
+        self.subwindows: Dict = {}
+        self.labels = label_lib.get_empty_labels()
+        self.ref_labels = label_lib.get_empty_labels()
+        self.neighbor_points = {}
+        self.auto_save_counter = 0
+
+        # init GUI
+        self.mdi = QMdiArea()
+        self.dock_sketch = SketchDock()
+        self.dock_controls = ControlsDock()
+
+        session_menu = self.menuBar().addMenu("&File")
+
+        view_menu = self.menuBar().addMenu("&View")
+        view_menu.addAction("&Tile", self.mdi.tileSubWindows)
+        view_menu.addAction("&Cascade", self.mdi.cascadeSubWindows)
+
+        # Config
+        self.load_cfg()
+
+        # Files
+        self.dataset_name = self.cfg['dataset_name'] if len(self.cfg['dataset_name']) \
+            else Path(self.cfg['recording_folder']).name
+        self.labels_folder = None  # Output folder to store labels/results
+
+        # Data load status
+        self.recordings_loaded = False
+        self.sketch_loaded = False
+        self.labels_loaded = False
+
+        # Controls
+        self.controls = {
+            'canvases': {},
+            'toolbars': {},
+            'figs': {},
+            'axes': {},
+            'plots': {},
+            'frames': {},
+            'grids': {},
+            'lists': {},
+            'fields': {},
+            'labels': {},
+            'buttons': {},
+            'texts': {},
+        }
+
+        # Loaded data
+        self.init_files_folders()
+        self.load_sketch(sketch_file=self.drive / Path(self.cfg['sketch_file']))
+
+        load_labels_file = self.cfg["load_labels_file"]
+        self.load_labels(labels_file=Path(load_labels_file) if isinstance(load_labels_file, str) else None)
+        self.load_ref_labels()
+
+        # Load other config params
+        self.dFrame = self.cfg['dFrame']
+        self.min_pose = int(self.cfg['min_pose'])
+        self.max_pose = int(self.cfg['max_pose'])
+        self.allowed_poses = np.arange(self.min_pose, self.max_pose, self.dFrame, dtype=int)
+        self.pose_idx = self.min_pose
+        self.dock_sketch.sketch_zoom_scale = self.cfg.get('sketch_zoom_scale', 0.1)
+
+        # GUI layout
+        self.setCentralWidget(self.mdi)
+        self.set_docks_layout()
+
+        self.dock_sketch.init_sketch()
+        self.init_viewer()
+        self.connect_controls()
+
+        self.showMaximized()
+        self.setFocus()
+        self.setWindowTitle('Labeling GUI')
+
+        self.sync = sync
+        self.mqtt_connect()
+
+        # TODO: ignoring calibration for now, will implement later if necessary
+
+    def load_cfg(self):
+        if os.path.isdir(self.drive):
+            self.user, job, correct_exit = SelectUserWindow.start(self.drive)
+            if correct_exit:
+                if job is not None:
+                    file_config = self.drive / 'data' / 'user' / self.user / 'jobs' / f'{job}.yml'
+                else:
+                    file_config = self.drive / 'data' / 'user' / self.user / 'labeling_gui_cfg.yml'
+                self.cfg = yaml_load(file_config)
+            else:
+                sys.exit()
+        else:
+            logger.log(logging.ERROR, 'Server is not mounted')
+            sys.exit()
+        logger.log(logging.INFO, "++++++++++++++++++++++++++++++++++++")
+        logger.log(logging.INFO, f"file_config: {file_config}")
+        logger.log(logging.INFO, "++++++++++++++++++++++++++++++++++++")
+        self.file_config = file_config
+
+    # Mqtt functions
+    def mqtt_connect(self):
+        if isinstance(self.sync, bool):
+            return
+        try:
+            self.mqtt_client = mqtt.Client()
+            self.mqtt_client.on_message = self.mqtt_on_message
+            self.mqtt_client.connect("127.0.0.1", 1883, 60)
+            self.mqtt_client.subscribe(self.sync)
+            self.mqtt_client.loop_start()
+        except ConnectionRefusedError:
+            logger.log(logging.ERROR, "No connection to MQTT server.")
+            self.mqtt_client = None
+
+    def mqtt_publish(self):
+        if self.mqtt_client is not None:
+            try:
+                self.mqtt_client.publish(self.sync, payload=str(self.pose_idx))
+            except ConnectionRefusedError:
+                logger.log(logging.ERROR, "No connection to MQTT server.")
+                self.mqtt_client = None
+
+    def mqtt_on_message(self, client, userdata, message):
+        logger.log(logging.INFO, f"Received message '{message.payload.decode()}' on topic '{message.topic}'")
+        match message.topic:
+            case "bbo/sync/fr_idx":
+                fr_idx = int(message.payload.decode())
+                self.set_pose_idx(fr_idx, mqtt_publish=False)
+
+    # Init functions
+    def init_files_folders(self):
+        recording_folder = Path(self.cfg['recording_folder'])
+        rec_files = (
+            [bbo_pm.decode_path(recording_folder / i).expanduser().resolve() for i in
+             self.cfg['recording_filenames']]
+        )
+        self.load_recordings(rec_files)
+
+        # create folder structure / save backup / load last pose
+        self.init_assistant_folders(recording_folder)
+        self.init_autosave()
+        archive_cfg(self.file_config, self.labels_folder)
+        self.restore_last_pose_idx()
+
+    def load_labels(self, labels_file: Optional[Path] = None):
+        if labels_file is None:
+            labels_file = self.labels_folder / 'labels.yml'
+
+        if labels_file.exists():
+            logger.log(logging.INFO, f'Loading labels from: {labels_file}')
+            self.labels = label_lib.load(labels_file)
+            self.labels_loaded = True
+            return
+        else:
+            logger.log(logging.WARNING, f'Autoloading failed. Labels file {labels_file} does not exist.')
+
+        # Add the label_names from sketch
+        for label_name, _ in self.dock_sketch.get_sketch_labels():
+            if label_name not in self.labels['labels']:
+                self.labels['labels'][label_name] = {}
+
+    def load_ref_labels(self):
+        ref_labels_file = self.cfg['reference_labels_file']
+        if isinstance(ref_labels_file, bool) and ref_labels_file:
+            self.cfg['reference_labels_file'] = ref_labels_file = self.drive / "data" / "references" / f"{self.dataset_name}.yml"
+        elif isinstance(ref_labels_file, str):
+            ref_labels_file = Path(ref_labels_file)
+        else:
+            return
+
+        if ref_labels_file.is_file():
+            self.ref_labels = label_lib.load(ref_labels_file)
+        else:
+            logger.log(logging.WARNING, f"Reference labels file {ref_labels_file.as_posix()} not found")
+
+    def load_sketch(self, sketch_file: Path):
+        # load sketch
+        if sketch_file.exists():
+            self.dock_sketch.sketch = np.load(sketch_file.as_posix(), allow_pickle=True)[()]
+            self.dock_sketch.set_sketch_zoom()
+            self.sketch_loaded = True
+        else:
+            logger.log(logging.WARNING, f'Autoloading failed. Sketch file {sketch_file} does not exist.')
+
+    def load_recordings(self, files: List[Path]):
+        cameras = []
+        logger.log(logging.DEBUG, svidreader.__file__)
+        for file in files:
+            logger.log(logging.INFO, f"File name: {file.name}")
+            reader = svidreader.get_reader(file.as_posix(), backend="iio", cache=True)
+            header = read_video_meta(reader)
+            cam = {
+                'file_name': file.name,
+                'reader': reader,
+                'header': header,
+                'x_lim_prev': (0, header['sensorsize'][0]),
+                'y_lim_prev': (0, header['sensorsize'][1]),
+                'rotate': False,
+            }
+            cameras.append(cam)
+
+        self.recordings_loaded = True
+        self.cameras = cameras
+
+    def get_n_poses(self):
+        return [cam["header"]["nFrames"] for cam in self.cameras]
+
+    def get_sensor_sizes(self):
+        return [cam["header"]["sensorsize"] for cam in self.cameras]
+
+    def get_camera_names(self):
+        return [cam["file_name"] for cam in self.cameras]
+
+    def get_x_res(self):
+        return [ss[0] for ss in self.get_sensor_sizes()]
+
+    def get_y_res(self):
+        return [ss[1] for ss in self.get_sensor_sizes()]
+
+    def restore_last_pose_idx(self):
+        # last pose
+        file_exit_status = self.labels_folder / 'exit_status.npy'
+        if file_exit_status.is_file():
+            exit_status = np.load(file_exit_status.as_posix(), allow_pickle=True)[()]
+            self.set_pose_idx(exit_status['i_pose'])
+
+    def init_assistant_folders(self, recording_folder: Path):
+        # folder structure
+        userfolder = self.drive / 'user' / self.user
+        os.makedirs(userfolder, exist_ok=True)
+        results_folder = userfolder / recording_folder.name
+        os.makedirs(results_folder, exist_ok=True)
+        self.labels_folder = results_folder.expanduser().resolve()
+
+        # backup
+        backup_folder = self.labels_folder / 'backup'
+        if not backup_folder.is_dir():
+            os.mkdir(backup_folder)
+        file = self.labels_folder / 'labeling_gui_cfg.yml'
+        if file.is_file():
+            archive_cfg(file, backup_folder)
+        file = self.labels_folder / 'labels.yml'
+        try:
+            labels_old = label_lib.load(file)
+            label_lib.save(backup_folder / 'labels.yml', labels_old)
+        except FileNotFoundError as e:
+            pass
+
+    def init_autosave(self):
+        # autosave
+        autosave_folder = self.labels_folder / 'autosave'
+        if not autosave_folder.is_dir():
+            os.makedirs(autosave_folder)
+        archive_cfg(self.file_config, autosave_folder)
+
+    def get_pose_idx(self):
+        return self.pose_idx
+
+    def init_viewer(self):
+        cam_names = self.get_camera_names()
+
+        # Open windows
+        for cam_idx, cam_name in enumerate(cam_names):
+            window = QMdiSubWindow(self.mdi)
+            window.setWindowTitle(cam_name)
+            # window.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+            # TODO: It will be ideal to have minimize and maximize buttons without close button
+
+            plot = pg.PlotWidget()
+            plot.invertY(True)
+            plot.showAxes(False)  # frame it with a full set of axes
+
+            img = self.cameras[cam_idx]['reader'].get_data(self.pose_idx)
+            # img_size = np.max(img.shape[:2])
+            img_y, img_x = img.shape[:2]
+            img = pg.ImageItem(img, axisOrder='row-major',
+                               autoLevels=img.dtype != np.uint8)
+            plot.addItem(img)
+            plot.setLimits(xMin=0, yMin=0,
+                           xMax=img_x, yMax=img_y)
+            window.setWidget(plot)
+            self.subwindows[cam_name] = window
+
+        self.viewer_plot_labels()
+        self.viewer_plot_ref_labels()
+
+    def init_colors(self):
+        colors = dict(mpl_colors.BASE_COLORS, **mpl_colors.CSS4_COLORS)
+        # Sort colors by hue, saturation, value and name.
+        by_hsv = sorted((tuple(mpl_colors.rgb_to_hsv(mpl_colors.to_rgba(color)[:3])), name)
+                        for name, color in colors.items())
+        sorted_names = [name for hsv, name in by_hsv]
+        for i in range(24, -1, -1):
+            self.colors = self.colors + sorted_names[i::24]
+
+    def set_pose_idx(self, pose_idx, mqtt_publish=True):
+        pose_idx = int(pose_idx)
+        pose_idx = self.allowed_poses[np.argmin(np.abs(self.allowed_poses - pose_idx))]
+
+        self.pose_idx = pose_idx
+        self.plot2d_change_frame()
+        if 'next' in self.controls['buttons']:
+            self.controls['buttons']['next'].clearFocus()
+
+        if mqtt_publish:
+            self.mqtt_publish()
+
+    def set_docks_layout(self):
+        # frame main
+        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_sketch)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_controls)
+
+    def trigger_autosave_event(self):
+        # TODO: would it not be better to trigger it based on time/clock?
+        if self.cfg['autoSave']:
+            self.auto_save_counter = self.auto_save_counter + 1
+            if np.mod(self.auto_save_counter, self.cfg['autoSaveN0']) == 0:
+                file = self.labels_folder / 'labels.yml'  # this is equal to self.labels_file
+                label_lib.save(file, self.labels)
+                logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
+            if np.mod(self.auto_save_counter, self.cfg['autoSaveN1']) == 0:
+                file = self.labels_folder / 'autosave' / 'labels.yml'
+                label_lib.save(file, self.labels)
+                logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
+
+                self.auto_save_counter = 0
+
+    def viewer_update_images(self):
+        for cam_idx, cam_name in enumerate(self.get_camera_names()):
+            subwin_img = self.subwindows[cam_name].widget().getPlotItem()
+            img = self.cameras[cam_idx]['reader'].get_data(self.pose_idx)
+            subwin_img.setImage(img, axisOrder='row-major',
+                               autoLevels=img.dtype != np.uint8)
+
+
+    def viewer_plot_labels(self):
+        frame_idx = self.get_pose_idx()
+        current_label_name = self.get_current_label()
+
+        for cam_idx, cam_name in enumerate(self.get_camera_names()):
+            subwin_plot = self.subwindows[cam_name].widget()
+
+            # Plot each label
+            for label_name in self.labels['labels']:
+                label_dict = self.labels['labels'][label_name]
+
+                if frame_idx in label_dict and \
+                    not np.any(np.isnan(label_dict[frame_idx][cam_idx])):
+                        # Plot actual/annotated labels
+                        point = label_dict[frame_idx][cam_idx, :]
+                        labeler = self.labels['labeler_list'][self.labels['labeler'][label_name][frame_idx][cam_idx]]
+
+                        if current_label_name == label_name:
+                            plot_params = {
+                                'symbolBrush': 'darkgreen',
+                                'symbolSize': 6,
+                                # 'zorder': 3,
+                            }
+                        else:
+                            plot_params = {
+                                'symbolBrush': 'cyan',
+                                'symbolSize': 4,
+                                # 'zorder': 2,
+                            }
+                        logger.log(logging.INFO, f"label {label_name} {frame_idx} {labeler}: {point}")
+                        subwin_plot.plot([point[0]], [point[1]], symbol='o', **plot_params)
+
+                else:
+                    # Plot a guess position based on previous or/and next frames
+                    point = np.full((1, 2), np.nan)
+
+                    # Try to take mean of symmetrical situation
+                    for offs in range(1, 4):
+                        if frame_idx - offs in label_dict and \
+                                not np.any(np.isnan(label_dict[frame_idx - offs][cam_idx])) and \
+                                frame_idx + offs in label_dict and \
+                                not np.any(np.isnan(label_dict[frame_idx + offs][cam_idx])):
+                            point = np.nanmean([point,
+                                                label_dict[frame_idx - offs][(cam_idx,),],
+                                                label_dict[frame_idx + offs][(cam_idx,),]
+                                                ], axis=0)
+                            break
+
+                    if np.any(np.isnan(point)):
+                        # Fill from one closest neighbor, TODO: Counter from other side even if not symmetrical?
+                        for offs in [-1, 1, -2, 2, -3, 3]:
+                            if frame_idx + offs in label_dict:
+                                point = label_dict[frame_idx + offs][(cam_idx,),]
+                                break
+
+                    if ~np.any(np.isnan(point)):
+                        if current_label_name == label_name:
+                            plot_params = {
+                                'symbolBrush': 'darkgreen',
+                                'symbolSize': 4,
+                                # 'zorder': 1,
+                            }
+                        else:
+                            plot_params = {
+                                'symbolBrush': 'cyan',
+                                'symbolSize': 3,
+                                # 'zorder': 0,
+                            }
+                        subwin_plot.plot(point[0][(0,),], point[0][(1,),],
+                                         symbol='+', **plot_params)
+
+    def viewer_plot_ref_labels(self):
+        # Plot reference labels
+        frame_idx = self.get_pose_idx()
+
+        for cam_idx, cam_name in enumerate(self.get_camera_names()):
+            subwin_plot = self.subwindows[cam_name].widget()
+
+            for label_name in self.labels['labels']:
+                if label_name in self.ref_labels['labels'] and frame_idx in self.ref_labels['labels'][label_name] and \
+                        not np.any(np.isnan(self.ref_labels['labels'][label_name][frame_idx][cam_idx])):
+
+                    ref_label_dict = self.ref_labels['labels'][label_name]
+                    label_dict = self.labels['labels'][label_name]
+                    point = ref_label_dict[frame_idx][cam_idx]
+    
+                    plot_params = {
+                        'symbolBrush': 'red',
+                        'symbolSize': 3,
+                    }
+                    subwin_plot.plot([point[0]], [point[1]],
+                                     marker='x', **plot_params)
+    
+                    if frame_idx in label_dict and \
+                            not np.any(np.isnan(label_dict[frame_idx][cam_idx])):
+                        line_coords = np.concatenate((label_dict[frame_idx][(cam_idx,), :],
+                                                      ref_label_dict[frame_idx][(cam_idx,), :]), axis=0)
+                        logger.log(logging.INFO, f"Drawing line, {line_coords.shape}, {line_coords}")
+                        subwin_plot.plot(*line_coords.T, 
+                                         symbolBrush="red",
+                                         linewidth=2)
+
+    def get_current_label(self):
+        # TODO: change it get it from controls_dock
+        return  list(self.dock_sketch.get_sketch_labels().keys())[0]
+
+    def button_home_press(self):
+        if self.recordingIsLoaded:
+            self.zoom_reset()
+
+    def connect_controls(self):
+        # TODO:
+        # self.widgets['canvases']['sketch'].mpl_connect('button_press_event',
+        #                                                lambda event: self.sketch_click(
+        #                                                    event))
+        self.dock_controls.widgets['buttons']['home'].clicked.connect(
+            self.viewer_zoom_reset)
+        self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
+            lambda: self.save_labels(None))
+
+    def save_labels(self, file:Path=None):
+        if file is None:
+            file = self.labels_folder / 'labels.yml'
+
+        label_lib.save(file, self.labels)
+
+    def viewer_zoom_reset(self):
+        # Reset view in all the subwindows
+        for _, subwin in self.subwindows.items():
+            subwin.widget().autoRange()
+
+class UnsupportedFormatException(Exception):
+    pass

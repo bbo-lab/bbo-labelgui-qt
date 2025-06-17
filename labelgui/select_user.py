@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import QDialog, QGridLayout, QComboBox, QSizePolicy, QPushB
 from glob import glob
 
 import yaml
+from jupyterlab.utils import deprecated
+
 
 class SelectUserWindow(QDialog):
     def __init__(self, drive: Path, parent=None):
@@ -24,6 +26,7 @@ class SelectUserWindow(QDialog):
 
         self.user_combobox = QComboBox()
         self.user_combobox.addItems(self.user_list)
+        self.user_combobox.setCurrentIndex(-1)
         self.user_combobox.setSizePolicy(QSizePolicy.Expanding,
                                          QSizePolicy.Preferred)
         self.selecting_layout.addWidget(self.user_combobox)
@@ -44,6 +47,7 @@ class SelectUserWindow(QDialog):
 
         self.setLayout(self.selecting_layout)
 
+        # TODO: Unnecessary, so remove
         self.defaults_file = Path("~/.bbo_labelgui/defaults.yml").expanduser().resolve()
 
         default_config = self.read_defaults()
@@ -53,6 +57,7 @@ class SelectUserWindow(QDialog):
         if default_config["job"] in self.job_names:
             self.job_combobox.setCurrentIndex(self.job_names.index(default_config["job"]))
 
+    @deprecated("Should check with Kay before removing")
     def read_defaults(self):
         default_config = None
         if self.defaults_file.is_file():
@@ -66,6 +71,7 @@ class SelectUserWindow(QDialog):
             }
         return default_config
 
+    @deprecated("Should check with Kay before removing")
     def write_defaults(self, user=None, job=None):
         if user is None:
             user = self.get_user()
@@ -88,7 +94,7 @@ class SelectUserWindow(QDialog):
     def user_change(self):
         job_dir = self.drive / 'data' / 'user' / self.get_user() / 'jobs'
         if job_dir.is_dir():
-            jobs = glob((job_dir / '*.py').as_posix())
+            jobs = glob((job_dir / '*.yml').as_posix())
             if len(jobs)>0:
                 jobs = sorted(jobs)
                 self.job_combobox.setDisabled(False)
@@ -128,6 +134,5 @@ class SelectUserWindow(QDialog):
         user = selecting.get_user()
         job = selecting.get_job()
         selecting.write_defaults(user, job)
-
 
         return user, job, exit_sel == QDialog.Accepted

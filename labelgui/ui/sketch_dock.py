@@ -10,6 +10,8 @@ class SketchDock(QDockWidget):
     def __init__(self):
 
         super().__init__("Sketch")
+        self.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+
         self.widgets = {
             'canvas': {},
             'figs': {},

@@ -1,7 +1,7 @@
 # DATA SELECTION
 allowed_cams: [0, 1]
 cam: 0
-min_pose: 0
+min_pose: 10546
 max_pose: 10770
 dFrame: 1
 
@@ -17,7 +17,7 @@ recording_filenames: [
 ]
 
 # LABELS
-load_labels_file:  # Give string takes labels from canonical path
+load_labels_file: "/home/cheekoti/mpinb/bitbucket/junker-bird/data/labelgui/labels-bc_20230524_N_2.yml" # Give string takes labels from canonical path
 reference_labels_file: True  # bool or str. If True, takes ref labels from canonical path. Or specify path to file
 
 # DISPLAY
