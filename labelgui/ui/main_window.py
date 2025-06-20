@@ -47,7 +47,7 @@ class MainWindow(QMainWindow):
         self.user = None
         self.drive = drive
         self.cfg = {}
-        self.file_config =None
+        self.file_config = None
         self.mqtt_client = None
 
         self.cameras: List[Dict] = []
@@ -71,6 +71,14 @@ class MainWindow(QMainWindow):
         # Config
         self.load_cfg()
 
+        # Load some params from config
+        self.d_frame = self.cfg['dFrame']
+        self.min_frame = int(self.cfg['min_frame'])
+        self.max_frame = int(self.cfg['max_frame'])
+        self.allowed_frames = np.arange(self.min_frame, self.max_frame, self.d_frame, dtype=int)
+        self.frame_idx = self.min_frame
+        self.dock_sketch.sketch_zoom_scale = self.cfg.get('sketch_zoom_scale', 0.1)
+
         # Files
         self.dataset_name = self.cfg['dataset_name'] if len(self.cfg['dataset_name']) \
             else Path(self.cfg['recording_folder']).name
@@ -80,22 +88,7 @@ class MainWindow(QMainWindow):
         self.recordings_loaded = False
         self.sketch_loaded = False
         self.labels_loaded = False
-
-        # Controls
-        self.controls = {
-            'canvases': {},
-            'toolbars': {},
-            'figs': {},
-            'axes': {},
-            'plots': {},
-            'frames': {},
-            'grids': {},
-            'lists': {},
-            'fields': {},
-            'labels': {},
-            'buttons': {},
-            'texts': {},
-        }
+        self.GUI_loaded = False
 
         # Loaded data
         self.init_files_folders()
@@ -105,21 +98,15 @@ class MainWindow(QMainWindow):
         self.load_labels(labels_file=Path(load_labels_file) if isinstance(load_labels_file, str) else None)
         self.load_ref_labels()
 
-        # Load other config params
-        self.dFrame = self.cfg['dFrame']
-        self.min_pose = int(self.cfg['min_pose'])
-        self.max_pose = int(self.cfg['max_pose'])
-        self.allowed_poses = np.arange(self.min_pose, self.max_pose, self.dFrame, dtype=int)
-        self.pose_idx = self.min_pose
-        self.dock_sketch.sketch_zoom_scale = self.cfg.get('sketch_zoom_scale', 0.1)
-
         # GUI layout
         self.setCentralWidget(self.mdi)
         self.set_docks_layout()
 
         self.dock_sketch.init_sketch()
         self.init_viewer()
+        self.fill_controls()
         self.connect_controls()
+        self.GUI_loaded = True
 
         self.showMaximized()
         self.setFocus()
@@ -166,7 +153,7 @@ class MainWindow(QMainWindow):
     def mqtt_publish(self):
         if self.mqtt_client is not None:
             try:
-                self.mqtt_client.publish(self.sync, payload=str(self.pose_idx))
+                self.mqtt_client.publish(self.sync, payload=str(self.frame_idx))
             except ConnectionRefusedError:
                 logger.log(logging.ERROR, "No connection to MQTT server.")
                 self.mqtt_client = None
@@ -176,7 +163,7 @@ class MainWindow(QMainWindow):
         match message.topic:
             case "bbo/sync/fr_idx":
                 fr_idx = int(message.payload.decode())
-                self.set_pose_idx(fr_idx, mqtt_publish=False)
+                self.set_frame_idx(fr_idx, mqtt_publish=False)
 
     # Init functions
     def init_files_folders(self):
@@ -187,11 +174,11 @@ class MainWindow(QMainWindow):
         )
         self.load_recordings(rec_files)
 
-        # create folder structure / save backup / load last pose
+        # create folder structure / save backup / load last frame
         self.init_assistant_folders(recording_folder)
         self.init_autosave()
         archive_cfg(self.file_config, self.labels_folder)
-        self.restore_last_pose_idx()
+        self.restore_last_frame_idx()
 
     def load_labels(self, labels_file: Optional[Path] = None):
         if labels_file is None:
@@ -201,12 +188,11 @@ class MainWindow(QMainWindow):
             logger.log(logging.INFO, f'Loading labels from: {labels_file}')
             self.labels = label_lib.load(labels_file)
             self.labels_loaded = True
-            return
         else:
             logger.log(logging.WARNING, f'Autoloading failed. Labels file {labels_file} does not exist.')
 
         # Add the label_names from sketch
-        for label_name, _ in self.dock_sketch.get_sketch_labels():
+        for label_name, _ in self.dock_sketch.get_sketch_labels().items():
             if label_name not in self.labels['labels']:
                 self.labels['labels'][label_name] = {}
 
@@ -253,7 +239,7 @@ class MainWindow(QMainWindow):
         self.recordings_loaded = True
         self.cameras = cameras
 
-    def get_n_poses(self):
+    def get_n_frames(self):
         return [cam["header"]["nFrames"] for cam in self.cameras]
 
     def get_sensor_sizes(self):
@@ -268,12 +254,12 @@ class MainWindow(QMainWindow):
     def get_y_res(self):
         return [ss[1] for ss in self.get_sensor_sizes()]
 
-    def restore_last_pose_idx(self):
-        # last pose
+    def restore_last_frame_idx(self):
+        # Retrieve last frame from 'exit' file
         file_exit_status = self.labels_folder / 'exit_status.npy'
         if file_exit_status.is_file():
             exit_status = np.load(file_exit_status.as_posix(), allow_pickle=True)[()]
-            self.set_pose_idx(exit_status['i_pose'])
+            self.set_frame_idx(exit_status['i_frame'])
 
     def init_assistant_folders(self, recording_folder: Path):
         # folder structure
@@ -304,8 +290,8 @@ class MainWindow(QMainWindow):
             os.makedirs(autosave_folder)
         archive_cfg(self.file_config, autosave_folder)
 
-    def get_pose_idx(self):
-        return self.pose_idx
+    def get_frame_idx(self):
+        return self.frame_idx
 
     def init_viewer(self):
         cam_names = self.get_camera_names()
@@ -314,14 +300,14 @@ class MainWindow(QMainWindow):
         for cam_idx, cam_name in enumerate(cam_names):
             window = QMdiSubWindow(self.mdi)
             window.setWindowTitle(cam_name)
-            # window.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+            window.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowTitleHint)
             # TODO: It will be ideal to have minimize and maximize buttons without close button
 
-            plot = pg.PlotWidget()
+            plot = pg.PlotWidget(enableMenu=False)
             plot.invertY(True)
             plot.showAxes(False)  # frame it with a full set of axes
 
-            img = self.cameras[cam_idx]['reader'].get_data(self.pose_idx)
+            img = self.cameras[cam_idx]['reader'].get_data(self.frame_idx)
             # img_size = np.max(img.shape[:2])
             img_y, img_x = img.shape[:2]
             img = pg.ImageItem(img, axisOrder='row-major',
@@ -332,9 +318,10 @@ class MainWindow(QMainWindow):
             window.setWidget(plot)
             self.subwindows[cam_name] = window
 
-        self.viewer_plot_labels()
+        self.viewer_plot_labels(current_label_name="")
         self.viewer_plot_ref_labels()
 
+    @DeprecationWarning
     def init_colors(self):
         colors = dict(mpl_colors.BASE_COLORS, **mpl_colors.CSS4_COLORS)
         # Sort colors by hue, saturation, value and name.
@@ -344,14 +331,21 @@ class MainWindow(QMainWindow):
         for i in range(24, -1, -1):
             self.colors = self.colors + sorted_names[i::24]
 
-    def set_pose_idx(self, pose_idx, mqtt_publish=True):
-        pose_idx = int(pose_idx)
-        pose_idx = self.allowed_poses[np.argmin(np.abs(self.allowed_poses - pose_idx))]
+    def get_valid_frame_idx(self, frame_idx:int):
+        return self.allowed_frames[np.argmin(np.abs(self.allowed_frames - frame_idx))]
 
-        self.pose_idx = pose_idx
-        self.plot2d_change_frame()
-        if 'next' in self.controls['buttons']:
-            self.controls['buttons']['next'].clearFocus()
+    def set_frame_idx(self, frame_idx:int or str, mqtt_publish=True):
+        if isinstance(frame_idx, str):
+            frame_idx = int(frame_idx)
+        self.frame_idx = self.get_valid_frame_idx(frame_idx)
+
+        if self.GUI_loaded:
+            # Controls dock
+            self.dock_controls.widgets['labels']['labeler'].setText(
+                ", ".join(label_lib.get_frame_labelers(self.labels, self.frame_idx))
+            )
+            # Viewer
+            self.viewer_change_frame()
 
         if mqtt_publish:
             self.mqtt_publish()
@@ -363,30 +357,36 @@ class MainWindow(QMainWindow):
 
     def trigger_autosave_event(self):
         # TODO: would it not be better to trigger it based on time/clock?
-        if self.cfg['autoSave']:
+        if self.cfg['auto_save']:
             self.auto_save_counter = self.auto_save_counter + 1
-            if np.mod(self.auto_save_counter, self.cfg['autoSaveN0']) == 0:
+            if np.mod(self.auto_save_counter, self.cfg['auto_save_N0']) == 0:
                 file = self.labels_folder / 'labels.yml'  # this is equal to self.labels_file
                 label_lib.save(file, self.labels)
                 logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
-            if np.mod(self.auto_save_counter, self.cfg['autoSaveN1']) == 0:
+            if np.mod(self.auto_save_counter, self.cfg['auto_save_N1']) == 0:
                 file = self.labels_folder / 'autosave' / 'labels.yml'
                 label_lib.save(file, self.labels)
                 logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
 
                 self.auto_save_counter = 0
 
+    def viewer_change_frame(self):
+        self.viewer_update_images()
+        self.viewer_plot_labels()
+        self.viewer_plot_ref_labels()
+
     def viewer_update_images(self):
         for cam_idx, cam_name in enumerate(self.get_camera_names()):
             subwin_img = self.subwindows[cam_name].widget().getPlotItem()
-            img = self.cameras[cam_idx]['reader'].get_data(self.pose_idx)
+            img = self.cameras[cam_idx]['reader'].get_data(self.frame_idx)
             subwin_img.setImage(img, axisOrder='row-major',
                                autoLevels=img.dtype != np.uint8)
 
 
-    def viewer_plot_labels(self):
-        frame_idx = self.get_pose_idx()
-        current_label_name = self.get_current_label()
+    def viewer_plot_labels(self, current_label_name=None):
+        frame_idx = self.get_frame_idx()
+        if current_label_name is None:
+            current_label_name = self.get_current_label()
 
         for cam_idx, cam_name in enumerate(self.get_camera_names()):
             subwin_plot = self.subwindows[cam_name].widget()
@@ -457,7 +457,7 @@ class MainWindow(QMainWindow):
 
     def viewer_plot_ref_labels(self):
         # Plot reference labels
-        frame_idx = self.get_pose_idx()
+        frame_idx = self.get_frame_idx()
 
         for cam_idx, cam_name in enumerate(self.get_camera_names()):
             subwin_plot = self.subwindows[cam_name].widget()
@@ -475,7 +475,7 @@ class MainWindow(QMainWindow):
                         'symbolSize': 3,
                     }
                     subwin_plot.plot([point[0]], [point[1]],
-                                     marker='x', **plot_params)
+                                     symbol='x', **plot_params)
     
                     if frame_idx in label_dict and \
                             not np.any(np.isnan(label_dict[frame_idx][cam_idx])):
@@ -487,22 +487,54 @@ class MainWindow(QMainWindow):
                                          linewidth=2)
 
     def get_current_label(self):
-        # TODO: change it get it from controls_dock
-        return  list(self.dock_sketch.get_sketch_labels().keys())[0]
+        selected_label = self.dock_controls.widgets['lists']['labels'].currentItem()
+        if selected_label is not None:
+            return selected_label.text()
+        else:
+            return self.dock_controls.widgets['lists']['labels']
 
-    def button_home_press(self):
-        if self.recordingIsLoaded:
-            self.zoom_reset()
+    def fill_controls(self):
+        # TODO: vmin, vmax
+        # Fields
+        self.dock_controls.widgets['fields']['current_frame'].setText(str(self.get_frame_idx()))
+        self.dock_controls.widgets['fields']['d_frame'].setText(str(self.d_frame))
+
+        # Lists
+        list_labels = self.dock_controls.widgets['lists']['labels']
+        list_labels.addItems(self.dock_sketch.get_sketch_labels())
+        list_labels.setCurrentRow(0)
 
     def connect_controls(self):
         # TODO:
         # self.widgets['canvases']['sketch'].mpl_connect('button_press_event',
         #                                                lambda event: self.sketch_click(
         #                                                    event))
+        # Buttons
         self.dock_controls.widgets['buttons']['home'].clicked.connect(
             self.viewer_zoom_reset)
+        self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(
+            lambda: self.set_frame_idx(self.get_frame_idx() - self.d_frame))
+        self.dock_controls.widgets['buttons']['next_frame'].clicked.connect(
+            lambda: self.set_frame_idx(self.get_frame_idx() + self.d_frame))
         self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
             lambda: self.save_labels(None))
+
+        list_labels = self.dock_controls.widgets['lists']['labels']
+
+        # Sketches
+        self.dock_sketch.sketch_clicked_signal.connect(list_labels.setCurrentRow)
+
+        self.dock_controls.connect_widgets()
+
+        list_labels.currentItemChanged.connect(self.label_select)
+
+        self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(self.previous_frame)
+        self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(self.next_frame)
+        self.dock_controls.widgets['fields']['current_frame'].textChanged.connect(self.set_frame_idx)
+
+    def add_label(self, coords, label_name, cam_idx, fr_idx):
+        # TODO
+        pass
 
     def save_labels(self, file:Path=None):
         if file is None:
@@ -514,6 +546,46 @@ class MainWindow(QMainWindow):
         # Reset view in all the subwindows
         for _, subwin in self.subwindows.items():
             subwin.widget().autoRange()
+
+    def label_select(self):
+        self.trigger_autosave_event()
+        self.dock_sketch.update_sketch(current_label_name=self.get_current_label())
+        self.dock_controls.widgets['lists']['labels'].clearFocus()
+        # TODO: viewer
+
+    def next_frame(self):
+        self.set_frame_idx(
+            self.get_valid_frame_idx(self.frame_idx + self.d_frame)
+        )
+        self.dock_controls.widgets['fields']['current_frame'].setText(str(self.get_frame_idx()))
+
+    def previous_frame(self):
+        self.set_frame_idx(
+            self.get_valid_frame_idx(self.frame_idx - self.d_frame)
+        )
+        self.dock_controls.widgets['fields']['current_frame'].setText(str(self.get_frame_idx()))
+
+    # Shortcuts
+    def keyPressEvent(self, event):
+        if self.cfg['button_next'] and event.key() == Qt.Key_D:
+            self.next_frame()
+        elif self.cfg['button_previous'] and event.key() == Qt.Key_A:
+            self.previous_frame()
+        else:
+            pass
+
+        if not (event.isAutoRepeat()):
+            if self.cfg['button_next_label'] and event.key() == Qt.Key_N:
+                self.dock_controls.widgets['buttons']['next_label'].click()
+            elif self.cfg['button_previous_label'] and event.key() == Qt.Key_P:
+                self.dock_controls.widgets['buttons']['previous_label'].click()
+            elif self.cfg['button_home'] and event.key() == Qt.Key_H:
+                self.dock_controls.widgets['buttons']['home'].click()
+
+    def closeEvent(self, event):
+        exit_status = dict()
+        exit_status['i_frame'] = self.get_frame_idx()
+        np.save(self.labels_folder / 'exit_status.npy', exit_status)
 
 class UnsupportedFormatException(Exception):
     pass
