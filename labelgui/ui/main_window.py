@@ -20,8 +20,7 @@ from PyQt5.QtWidgets import QMdiArea, \
     QLabel, \
     QLineEdit, \
     QListWidget, \
-    QMainWindow, \
-    QPushButton, QComboBox
+    QMainWindow
 
 from matplotlib import colors as mpl_colors
 
@@ -35,7 +34,7 @@ import svidreader
 
 from labelgui.misc import archive_cfg, read_video_meta
 from labelgui.select_user import SelectUserWindow
-from labelgui.ui import ControlsDock, SketchDock
+from labelgui.ui import ControlsDock, SketchDock, ViewerSubWindow
 
 logger = logging.getLogger(__name__)
 
@@ -298,24 +297,10 @@ class MainWindow(QMainWindow):
 
         # Open windows
         for cam_idx, cam_name in enumerate(cam_names):
-            window = QMdiSubWindow(self.mdi)
-            window.setWindowTitle(cam_name)
-            window.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowTitleHint)
-            # TODO: It will be ideal to have minimize and maximize buttons without close button
-
-            plot = pg.PlotWidget(enableMenu=False)
-            plot.invertY(True)
-            plot.showAxes(False)  # frame it with a full set of axes
-
-            img = self.cameras[cam_idx]['reader'].get_data(self.frame_idx)
-            # img_size = np.max(img.shape[:2])
-            img_y, img_x = img.shape[:2]
-            img = pg.ImageItem(img, axisOrder='row-major',
-                               autoLevels=img.dtype != np.uint8)
-            plot.addItem(img)
-            plot.setLimits(xMin=0, yMin=0,
-                           xMax=img_x, yMax=img_y)
-            window.setWidget(plot)
+            window = ViewerSubWindow(reader=self.cameras[cam_idx]['reader'],
+                                     parent=self.mdi)
+            window.setWindowTitle(self.cameras[cam_idx]['file_name'])
+            window.redraw_frame(self.frame_idx)
             self.subwindows[cam_name] = window
 
         self.viewer_plot_labels(current_label_name="")
@@ -372,16 +357,14 @@ class MainWindow(QMainWindow):
 
     def viewer_change_frame(self):
         self.viewer_update_images()
+
+        self.viewer_clear_labels()
         self.viewer_plot_labels()
         self.viewer_plot_ref_labels()
 
     def viewer_update_images(self):
         for cam_idx, cam_name in enumerate(self.get_camera_names()):
-            subwin_img = self.subwindows[cam_name].widget().getPlotItem()
-            img = self.cameras[cam_idx]['reader'].get_data(self.frame_idx)
-            subwin_img.setImage(img, axisOrder='row-major',
-                               autoLevels=img.dtype != np.uint8)
-
+            self.subwindows[cam_name].redraw_frame(self.frame_idx)
 
     def viewer_plot_labels(self, current_label_name=None):
         frame_idx = self.get_frame_idx()
@@ -389,7 +372,7 @@ class MainWindow(QMainWindow):
             current_label_name = self.get_current_label()
 
         for cam_idx, cam_name in enumerate(self.get_camera_names()):
-            subwin_plot = self.subwindows[cam_name].widget()
+            subwin = self.subwindows[cam_name]
 
             # Plot each label
             for label_name in self.labels['labels']:
@@ -400,21 +383,9 @@ class MainWindow(QMainWindow):
                         # Plot actual/annotated labels
                         point = label_dict[frame_idx][cam_idx, :]
                         labeler = self.labels['labeler_list'][self.labels['labeler'][label_name][frame_idx][cam_idx]]
-
-                        if current_label_name == label_name:
-                            plot_params = {
-                                'symbolBrush': 'darkgreen',
-                                'symbolSize': 6,
-                                # 'zorder': 3,
-                            }
-                        else:
-                            plot_params = {
-                                'symbolBrush': 'cyan',
-                                'symbolSize': 4,
-                                # 'zorder': 2,
-                            }
                         logger.log(logging.INFO, f"label {label_name} {frame_idx} {labeler}: {point}")
-                        subwin_plot.plot([point[0]], [point[1]], symbol='o', **plot_params)
+                        subwin.draw_label(point[0], point[1], label_name,
+                                          label_type='current_label' if current_label_name == label_name else 'label')
 
                 else:
                     # Plot a guess position based on previous or/and next frames
@@ -440,27 +411,16 @@ class MainWindow(QMainWindow):
                                 break
 
                     if ~np.any(np.isnan(point)):
-                        if current_label_name == label_name:
-                            plot_params = {
-                                'symbolBrush': 'darkgreen',
-                                'symbolSize': 4,
-                                # 'zorder': 1,
-                            }
-                        else:
-                            plot_params = {
-                                'symbolBrush': 'cyan',
-                                'symbolSize': 3,
-                                # 'zorder': 0,
-                            }
-                        subwin_plot.plot(point[0][(0,),], point[0][(1,),],
-                                         symbol='+', **plot_params)
+                        subwin.draw_label(point[0][0], point[0][1], label_name,
+                                          guess=True,
+                                          label_type='current_label' if current_label_name == label_name else 'label')
 
     def viewer_plot_ref_labels(self):
         # Plot reference labels
         frame_idx = self.get_frame_idx()
 
         for cam_idx, cam_name in enumerate(self.get_camera_names()):
-            subwin_plot = self.subwindows[cam_name].widget()
+            subwin = self.subwindows[cam_name]
 
             for label_name in self.labels['labels']:
                 if label_name in self.ref_labels['labels'] and frame_idx in self.ref_labels['labels'][label_name] and \
@@ -469,22 +429,19 @@ class MainWindow(QMainWindow):
                     ref_label_dict = self.ref_labels['labels'][label_name]
                     label_dict = self.labels['labels'][label_name]
                     point = ref_label_dict[frame_idx][cam_idx]
-    
-                    plot_params = {
-                        'symbolBrush': 'red',
-                        'symbolSize': 3,
-                    }
-                    subwin_plot.plot([point[0]], [point[1]],
-                                     symbol='x', **plot_params)
+                    subwin.draw_label(point[0], point[1], label_name, label_type="ref_label")
     
                     if frame_idx in label_dict and \
                             not np.any(np.isnan(label_dict[frame_idx][cam_idx])):
                         line_coords = np.concatenate((label_dict[frame_idx][(cam_idx,), :],
                                                       ref_label_dict[frame_idx][(cam_idx,), :]), axis=0)
                         logger.log(logging.INFO, f"Drawing line, {line_coords.shape}, {line_coords}")
-                        subwin_plot.plot(*line_coords.T, 
-                                         symbolBrush="red",
-                                         linewidth=2)
+                        # TODO: test this
+                        subwin.draw_label(*line_coords.T, label_name, label_type='error_line')
+
+    def viewer_clear_labels(self):
+        for cam_idx, cam_name in enumerate(self.get_camera_names()):
+            self.subwindows[cam_name].clear_all_labels()
 
     def get_current_label(self):
         selected_label = self.dock_controls.widgets['lists']['labels'].currentItem()
@@ -512,10 +469,6 @@ class MainWindow(QMainWindow):
         # Buttons
         self.dock_controls.widgets['buttons']['home'].clicked.connect(
             self.viewer_zoom_reset)
-        self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(
-            lambda: self.set_frame_idx(self.get_frame_idx() - self.d_frame))
-        self.dock_controls.widgets['buttons']['next_frame'].clicked.connect(
-            lambda: self.set_frame_idx(self.get_frame_idx() + self.d_frame))
         self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
             lambda: self.save_labels(None))
 
@@ -529,8 +482,9 @@ class MainWindow(QMainWindow):
         list_labels.currentItemChanged.connect(self.label_select)
 
         self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(self.previous_frame)
-        self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(self.next_frame)
-        self.dock_controls.widgets['fields']['current_frame'].textChanged.connect(self.set_frame_idx)
+        self.dock_controls.widgets['buttons']['next_frame'].clicked.connect(self.next_frame)
+        self.dock_controls.widgets['fields']['current_frame'].returnPressed.connect(
+            lambda: self.set_frame_idx(self.dock_controls.widgets['fields']['current_frame'].text()))
 
     def add_label(self, coords, label_name, cam_idx, fr_idx):
         # TODO
@@ -545,7 +499,7 @@ class MainWindow(QMainWindow):
     def viewer_zoom_reset(self):
         # Reset view in all the subwindows
         for _, subwin in self.subwindows.items():
-            subwin.widget().autoRange()
+            subwin.plot_wget.autoRange()
 
     def label_select(self):
         self.trigger_autosave_event()

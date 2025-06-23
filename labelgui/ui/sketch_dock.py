@@ -1,4 +1,5 @@
 from PyQt5.QtWidgets import QDockWidget
+from PyQt5.QtCore import pyqtSignal
 import numpy as np
 
 from matplotlib.figure import Figure
@@ -6,6 +7,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 
 
 class SketchDock(QDockWidget):
+    sketch_clicked_signal = pyqtSignal(int)
 
     def __init__(self):
 
@@ -45,12 +47,13 @@ class SketchDock(QDockWidget):
 
         self.setWidget(self.widgets['canvas']['sketch'])
 
+
     def init_sketch(self):
         sketch = self.get_sketch_image()
 
         # full
         self.widgets['axes']['sketch'].imshow(sketch)
-        self.widgets['axes']['sketch'].invert_yaxis()
+        # self.widgets['axes']['sketch'].invert_yaxis()
 
         # zoom
         self.widgets['axes']['sketch_zoom'].imshow(sketch)
@@ -58,10 +61,10 @@ class SketchDock(QDockWidget):
             [np.shape(sketch)[1] / 2 - self.sketch_zoom_dx, np.shape(sketch)[1] / 2 + self.sketch_zoom_dx])
         self.widgets['axes']['sketch_zoom'].set_ylim(
             [np.shape(sketch)[0] / 2 - self.sketch_zoom_dy, np.shape(sketch)[0] / 2 + self.sketch_zoom_dy])
-        self.widgets['axes']['sketch_zoom'].invert_yaxis()
 
         self.init_sketch_labels()
         self.update_sketch()
+        self.connect_widgets()
 
     def init_sketch_labels(self):
         # Plot all the labels
@@ -105,6 +108,9 @@ class SketchDock(QDockWidget):
         self.widgets['highlight_circle']['sketch_zoom'] = self.widgets['axes']['sketch_zoom'].plot(
             [np.nan], [np.nan], **highlight_circle_params)[0]
 
+    def connect_widgets(self):
+        self.widgets['canvas']['sketch'].mpl_connect('button_press_event', self.sketch_click)
+
     def update_sketch(self, current_label_name=None):
         # Updates labels on the sketch
         sketch_labels = self.get_sketch_labels()
@@ -140,3 +146,12 @@ class SketchDock(QDockWidget):
     def get_sketch_label_coordinates(self):
         return np.array(list(self.get_sketch_labels().values()), dtype=np.float64)
 
+    def sketch_click(self, event):
+        if event.button == 1:
+            x = event.xdata
+            y = event.ydata
+            if (x is not None) & (y is not None):
+                label_coordinates = self.get_sketch_label_coordinates()
+                dists = ((x - label_coordinates[:, 0]) ** 2 + (y - label_coordinates[:, 1]) ** 2) ** 0.5
+                label_index = np.argmin(dists)
+                self.sketch_clicked_signal.emit(label_index)

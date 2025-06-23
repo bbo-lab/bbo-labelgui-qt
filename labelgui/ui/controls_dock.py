@@ -37,26 +37,26 @@ class ControlsDock(QDockWidget):
         row += 1
         self.add_button("Save Labels (S)", row, 0, "save_labels")
 
-        list_labels = QListWidget()
-        list_labels.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.layout_grid.addWidget(list_labels, row, 1, 3, 2)
-        self.widgets['lists']['labels'] = list_labels
+        self.list_labels = QListWidget()
+        self.list_labels.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.layout_grid.addWidget(self.list_labels, row, 1, 3, 2)
+        self.widgets['lists']['labels'] = self.list_labels  # adding to widgets for completeness
 
-        row += 1
+        row += 3  # Giving space for the list_labels
         self.add_button("Previous Label (P)", row, 1, "previous_label")
         self.add_button("Next Label (N)", row, 2, "next_label")
 
         row += 1
-        self.add_label("current frame:", row, 0, "current_pose")
+        self.add_label("current frame:", row, 0, "current_frame")
         self.add_label("dFrame:", row, 1, "d_frame")
 
         row += 1
-        self.add_field(row, 0, "current_pose")
-        self.add_field(row, 0, "d_frame")
+        self.add_field(row, 0, "current_frame")
+        self.add_field(row, 1, "d_frame")
 
         row += 1
-        self.add_button("Previous Frame (A)", row, 0, "previous")
-        self.add_button("Next Frame (D)", row, 1, "next")
+        self.add_button("Previous Frame (A)", row, 0, "previous_frame")
+        self.add_button("Next Frame (D)", row, 1, "next_frame")
         self.add_button("Home (H)", row, 2, "home")
 
         row += 1
@@ -88,6 +88,12 @@ class ControlsDock(QDockWidget):
             button_key = button_text
         self.widgets['buttons'][button_key] = button_widget
 
+    def connect_widgets(self):
+        ll = self.list_labels
+        self.widgets['buttons']['next_label'].clicked.connect(lambda:
+                                                              ll.setCurrentRow((ll.currentRow() + 1) % ll.count()))
+        self.widgets['buttons']['previous_label'].clicked.connect(lambda:
+                                                              ll.setCurrentRow((ll.currentRow() - 1) % ll.count()))
 
 
 def get_button_status(button: QPushButton):
