@@ -12,14 +12,7 @@ from PyQt5 import QtCore
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import QMdiArea, \
-    QMdiSubWindow, \
-    QApplication, \
-    QFrame, \
     QFileDialog, \
-    QGridLayout, \
-    QLabel, \
-    QLineEdit, \
-    QListWidget, \
     QMainWindow
 
 from matplotlib import colors as mpl_colors
@@ -62,6 +55,7 @@ class MainWindow(QMainWindow):
         self.dock_controls = ControlsDock()
 
         session_menu = self.menuBar().addMenu("&File")
+        session_menu.addAction("Save Labels As...", self.save_labels_as)
 
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction("&Tile", self.mdi.tileSubWindows)
@@ -366,8 +360,10 @@ class MainWindow(QMainWindow):
         for cam_idx, cam_name in enumerate(self.get_camera_names()):
             self.subwindows[cam_name].redraw_frame(self.frame_idx)
 
-    def viewer_plot_labels(self, current_label_name=None):
+    def viewer_plot_labels(self, label_names=None, current_label_name=None):
         frame_idx = self.get_frame_idx()
+        if label_names is None:
+            label_names = list(self.labels['labels'].keys())
         if current_label_name is None:
             current_label_name = self.get_current_label()
 
@@ -375,8 +371,8 @@ class MainWindow(QMainWindow):
             subwin = self.subwindows[cam_name]
 
             # Plot each label
-            for label_name in self.labels['labels']:
-                label_dict = self.labels['labels'][label_name]
+            for label_name in label_names:
+                label_dict = self.labels['labels'].get(label_name, {})
 
                 if frame_idx in label_dict and \
                     not np.any(np.isnan(label_dict[frame_idx][cam_idx])):
@@ -496,6 +492,13 @@ class MainWindow(QMainWindow):
 
         label_lib.save(file, self.labels)
 
+    def save_labels_as(self):
+        """ MenuBar > Save As..."""
+        file = QFileDialog.getSaveFileName(self, "Save Labels As...", "", "Session File (*.yml)")[0]
+        if file:
+            logger.log(logging.INFO, f"Saving Labels As {file}")
+            self.save_labels(Path(file))
+
     def viewer_zoom_reset(self):
         # Reset view in all the subwindows
         for _, subwin in self.subwindows.items():
@@ -505,7 +508,9 @@ class MainWindow(QMainWindow):
         self.trigger_autosave_event()
         self.dock_sketch.update_sketch(current_label_name=self.get_current_label())
         self.dock_controls.widgets['lists']['labels'].clearFocus()
-        # TODO: viewer
+        for _, subwin in self.subwindows.items():
+          subwin.set_current_label(label_name=self.get_current_label())
+        # self.viewer_plot_labels(label_names=[self.get_current_label()])
 
     def next_frame(self):
         self.set_frame_idx(
