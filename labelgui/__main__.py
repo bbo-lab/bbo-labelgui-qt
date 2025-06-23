@@ -2,10 +2,13 @@ import argparse
 import os
 from pathlib import Path
 from bbo import label_lib
+import logging
 from PyQt5.QtWidgets import QApplication
 
 from labelgui import ui
 
+
+logger = logging.getLogger(__name__)
 
 def main():
     # Parse inputs
@@ -27,10 +30,13 @@ def main():
                         help="Switches between master mode and worker mode")
     parser.add_argument('--sync', type=str, required=False, nargs='*', default=[False],
                         help="Sync via mqtt. Defaults to channel bbo/sync/fr_idx")
+    parser.add_argument('-log', '--loglevel', default='info', help='Provide logging level')
 
     args = parser.parse_args()
+    logging.basicConfig(level=args.loglevel.upper())
+
     input_path = os.path.expanduser(args.INPUT_PATH)
-    print(input_path)
+    logger.log(logging.INFO, f"Input path: {input_path}")
 
     if args.merge is not None:
         label_lib.merge(args.merge, target_file=input_path, overwrite=True, yml_only=args.yml_only)
