@@ -6,9 +6,9 @@ import yaml
 from bbo.yaml import load as yaml_load
 
 
-def save_cfg(path: Path, cfg):
-    with open(path, "w") as yml_file:
-        yaml.dump(cfg, yml_file, default_flow_style=False, sort_keys=False, )
+def save_cfg(save_path: Path, cfg):
+    with open(save_path, "w") as yml_file:
+        yaml.dump(cfg, yml_file, default_flow_style=False, sort_keys=False)
 
 
 def archive_cfg(cfg, target_dir: Path):
@@ -16,7 +16,7 @@ def archive_cfg(cfg, target_dir: Path):
         shutil.copy(cfg, target_dir.as_posix())
         cfg = yaml_load(cfg)
 
-    save_cfg(target_dir / "labeling_gui_cfg_processed.yml", cfg)
+    save_cfg(target_dir / "labelgui_cfg_processed.yml", cfg)
 
 
 def read_video_meta(reader):

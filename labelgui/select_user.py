@@ -7,7 +7,6 @@ from PyQt5.QtWidgets import QDialog, QGridLayout, QComboBox, QSizePolicy, QPushB
 from glob import glob
 
 import yaml
-from jupyterlab.utils import deprecated
 
 
 class SelectUserWindow(QDialog):
@@ -47,7 +46,7 @@ class SelectUserWindow(QDialog):
 
         self.setLayout(self.selecting_layout)
 
-        # TODO: Unnecessary, so remove
+        # Useful for automatically loading user preferences
         self.defaults_file = Path("~/.bbo_labelgui/defaults.yml").expanduser().resolve()
 
         default_config = self.read_defaults()
@@ -57,7 +56,6 @@ class SelectUserWindow(QDialog):
         if default_config["job"] in self.job_names:
             self.job_combobox.setCurrentIndex(self.job_names.index(default_config["job"]))
 
-    @deprecated("Should check with Kay before removing")
     def read_defaults(self):
         default_config = None
         if self.defaults_file.is_file():
@@ -71,7 +69,6 @@ class SelectUserWindow(QDialog):
             }
         return default_config
 
-    @deprecated("Should check with Kay before removing")
     def write_defaults(self, user=None, job=None):
         if user is None:
             user = self.get_user()
