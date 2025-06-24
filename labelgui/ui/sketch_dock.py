@@ -53,7 +53,6 @@ class SketchDock(QDockWidget):
 
         # full
         self.widgets['axes']['sketch'].imshow(sketch)
-        # self.widgets['axes']['sketch'].invert_yaxis()
 
         # zoom
         self.widgets['axes']['sketch_zoom'].imshow(sketch)
@@ -115,19 +114,19 @@ class SketchDock(QDockWidget):
         # Updates labels on the sketch
         sketch_labels = self.get_sketch_labels()
 
-        if current_label_name is None:
-            current_label_name = list(sketch_labels)[0]
-        if current_label_name not in sketch_labels:
-            return
+        if current_label_name:
+            (x, y) = sketch_labels[current_label_name].astype(np.float32)
+        else:
+            x, y = (np.nan, np.nan)
 
-        (x, y) = sketch_labels[current_label_name].astype(np.float32)
         self.widgets['highlight_dot']['sketch'].set_data([x], [y])
         self.widgets['highlight_circle']['sketch'].set_data([x], [y])
         # zoom
         self.widgets['highlight_dot']['sketch_zoom'].set_data([x], [y])
         self.widgets['highlight_circle']['sketch_zoom'].set_data([x], [y])
-        self.widgets['axes']['sketch_zoom'].set_xlim([x - self.sketch_zoom_dx, x + self.sketch_zoom_dx])
-        self.widgets['axes']['sketch_zoom'].set_ylim([y - self.sketch_zoom_dy, y + self.sketch_zoom_dy])
+        if not np.any(np.isnan([x, y])):
+            self.widgets['axes']['sketch_zoom'].set_xlim([x - self.sketch_zoom_dx, x + self.sketch_zoom_dx])
+            self.widgets['axes']['sketch_zoom'].set_ylim([y - self.sketch_zoom_dy, y + self.sketch_zoom_dy])
         self.widgets['axes']['sketch_zoom'].invert_yaxis()
 
         self.widgets['canvas']['sketch'].draw()

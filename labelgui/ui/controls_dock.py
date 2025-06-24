@@ -19,14 +19,6 @@ class ControlsDock(QDockWidget):
         self.layout_grid = QGridLayout()
 
         row = 0
-        self.add_label("dx:", row, 1, "dx")
-        self.add_label("dy:", row, 2, "dy")
-
-        row += 1
-        self.add_field(row, 1, "dx")
-        self.add_field(row, 2, "dy")
-
-        row += 1
         self.add_label("vmin:", row, 1, "vmin")
         self.add_label("vmax:", row, 2, "vmax")
 

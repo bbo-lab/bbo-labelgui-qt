@@ -1,29 +1,22 @@
 #!/usr/bin/env python3
-import hashlib
 
-import numpy as np
+import logging
 import os
 import sys
 import time
+from pathlib import Path
 from typing import List, Dict, Optional
-import logging
 
-from PyQt5 import QtCore
+import numpy as np
+import paho.mqtt.client as mqtt
+import svidreader
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import QMdiArea, \
     QFileDialog, \
     QMainWindow
-
-from matplotlib import colors as mpl_colors
-
-from pathlib import Path
-import paho.mqtt.client as mqtt
-import pyqtgraph as pg
-
 from bbo import label_lib, path_management as bbo_pm
 from bbo.yaml import load as yaml_load
-import svidreader
+from matplotlib import colors as mpl_colors
 
 from labelgui.misc import archive_cfg, read_video_meta
 from labelgui.select_user import SelectUserWindow
@@ -33,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, drive: Path, file_config=None, parent=None, sync:str|bool=False):
+    def __init__(self, drive: Path, file_config=None, parent=None, sync: str | bool = False):
         super(MainWindow, self).__init__(parent)
 
         self.user = None
@@ -117,7 +110,7 @@ class MainWindow(QMainWindow):
                 if job is not None:
                     file_config = self.drive / 'data' / 'user' / self.user / 'jobs' / f'{job}.yml'
                 else:
-                    file_config = self.drive / 'data' / 'user' / self.user / 'labeling_gui_cfg.yml'
+                    file_config = self.drive / 'data' / 'user' / self.user / 'labelgui_cfg.yml'
                 self.cfg = yaml_load(file_config)
             else:
                 sys.exit()
@@ -179,12 +172,13 @@ class MainWindow(QMainWindow):
 
         if labels_file.exists():
             logger.log(logging.INFO, f'Loading labels from: {labels_file}')
-            self.labels = label_lib.load(labels_file)
+            self.labels = label_lib.load(labels_file, v0_format=False)
             self.labels_loaded = True
         else:
             logger.log(logging.WARNING, f'Autoloading failed. Labels file {labels_file} does not exist.')
 
         # Add the label_names from sketch
+        # TODO: Could be uncessary
         for label_name, _ in self.dock_sketch.get_sketch_labels().items():
             if label_name not in self.labels['labels']:
                 self.labels['labels'][label_name] = {}
@@ -192,14 +186,15 @@ class MainWindow(QMainWindow):
     def load_ref_labels(self):
         ref_labels_file = self.cfg['reference_labels_file']
         if isinstance(ref_labels_file, bool) and ref_labels_file:
-            self.cfg['reference_labels_file'] = ref_labels_file = self.drive / "data" / "references" / f"{self.dataset_name}.yml"
+            self.cfg[
+                'reference_labels_file'] = ref_labels_file = self.drive / "data" / "references" / f"{self.dataset_name}.yml"
         elif isinstance(ref_labels_file, str):
             ref_labels_file = Path(ref_labels_file)
         else:
             return
 
         if ref_labels_file.is_file():
-            self.ref_labels = label_lib.load(ref_labels_file)
+            self.ref_labels = label_lib.load(ref_labels_file, v0_format=False)
         else:
             logger.log(logging.WARNING, f"Reference labels file {ref_labels_file.as_posix()} not found")
 
@@ -263,15 +258,16 @@ class MainWindow(QMainWindow):
         self.labels_folder = results_folder.expanduser().resolve()
 
         # backup
+        # TODO: Something is wrong here, check with Kay about what are the files needed to be saved and where
         backup_folder = self.labels_folder / 'backup'
         if not backup_folder.is_dir():
             os.mkdir(backup_folder)
-        file = self.labels_folder / 'labeling_gui_cfg.yml'
+        file = self.labels_folder / 'labelgui_cfg.yml'
         if file.is_file():
             archive_cfg(file, backup_folder)
         file = self.labels_folder / 'labels.yml'
         try:
-            labels_old = label_lib.load(file)
+            labels_old = label_lib.load(file, v0_format=False)
             label_lib.save(backup_folder / 'labels.yml', labels_old)
         except FileNotFoundError as e:
             pass
@@ -291,9 +287,10 @@ class MainWindow(QMainWindow):
 
         # Open windows
         for cam_idx, cam_name in enumerate(cam_names):
-            window = ViewerSubWindow(reader=self.cameras[cam_idx]['reader'],
+            window = ViewerSubWindow(index=cam_idx,
+                                     reader=self.cameras[cam_idx]['reader'],
                                      parent=self.mdi)
-            window.setWindowTitle(self.cameras[cam_idx]['file_name'])
+            window.setWindowTitle(f'{self.cameras[cam_idx]['file_name']} ({cam_idx})')
             window.redraw_frame(self.frame_idx)
             self.subwindows[cam_name] = window
 
@@ -310,10 +307,10 @@ class MainWindow(QMainWindow):
         for i in range(24, -1, -1):
             self.colors = self.colors + sorted_names[i::24]
 
-    def get_valid_frame_idx(self, frame_idx:int):
+    def get_valid_frame_idx(self, frame_idx: int):
         return self.allowed_frames[np.argmin(np.abs(self.allowed_frames - frame_idx))]
 
-    def set_frame_idx(self, frame_idx:int or str, mqtt_publish=True):
+    def set_frame_idx(self, frame_idx: int or str, mqtt_publish=True):
         if isinstance(frame_idx, str):
             frame_idx = int(frame_idx)
         self.frame_idx = self.get_valid_frame_idx(frame_idx)
@@ -363,7 +360,7 @@ class MainWindow(QMainWindow):
     def viewer_plot_labels(self, label_names=None, current_label_name=None):
         frame_idx = self.get_frame_idx()
         if label_names is None:
-            label_names = list(self.labels['labels'].keys())
+            label_names = label_lib.get_labels(self.labels)
         if current_label_name is None:
             current_label_name = self.get_current_label()
 
@@ -375,10 +372,10 @@ class MainWindow(QMainWindow):
                 label_dict = self.labels['labels'].get(label_name, {})
 
                 if frame_idx in label_dict and \
-                    not np.any(np.isnan(label_dict[frame_idx][cam_idx])):
+                    not np.any(np.isnan(label_dict[frame_idx]['coords'][cam_idx])):
                         # Plot actual/annotated labels
-                        point = label_dict[frame_idx][cam_idx, :]
-                        labeler = self.labels['labeler_list'][self.labels['labeler'][label_name][frame_idx][cam_idx]]
+                        point = label_dict[frame_idx]['coords'][cam_idx, :]
+                        labeler = self.labels['labeler_list'][label_dict[frame_idx]['labeler'][cam_idx]]
                         logger.log(logging.INFO, f"label {label_name} {frame_idx} {labeler}: {point}")
                         subwin.draw_label(point[0], point[1], label_name,
                                           label_type='current_label' if current_label_name == label_name else 'label')
@@ -390,12 +387,12 @@ class MainWindow(QMainWindow):
                     # Try to take mean of symmetrical situation
                     for offs in range(1, 4):
                         if frame_idx - offs in label_dict and \
-                                not np.any(np.isnan(label_dict[frame_idx - offs][cam_idx])) and \
+                                not np.any(np.isnan(label_dict[frame_idx - offs]['coords'][cam_idx])) and \
                                 frame_idx + offs in label_dict and \
-                                not np.any(np.isnan(label_dict[frame_idx + offs][cam_idx])):
+                                not np.any(np.isnan(label_dict[frame_idx + offs]['coords'][cam_idx])):
                             point = np.nanmean([point,
-                                                label_dict[frame_idx - offs][(cam_idx,),],
-                                                label_dict[frame_idx + offs][(cam_idx,),]
+                                                label_dict[frame_idx - offs]['coords'][(cam_idx,),],
+                                                label_dict[frame_idx + offs]['coords'][(cam_idx,),]
                                                 ], axis=0)
                             break
 
@@ -403,7 +400,7 @@ class MainWindow(QMainWindow):
                         # Fill from one closest neighbor, TODO: Counter from other side even if not symmetrical?
                         for offs in [-1, 1, -2, 2, -3, 3]:
                             if frame_idx + offs in label_dict:
-                                point = label_dict[frame_idx + offs][(cam_idx,),]
+                                point = label_dict[frame_idx + offs]['coords'][(cam_idx,),]
                                 break
 
                     if ~np.any(np.isnan(point)):
@@ -420,31 +417,90 @@ class MainWindow(QMainWindow):
 
             for label_name in self.labels['labels']:
                 if label_name in self.ref_labels['labels'] and frame_idx in self.ref_labels['labels'][label_name] and \
-                        not np.any(np.isnan(self.ref_labels['labels'][label_name][frame_idx][cam_idx])):
+                        not np.any(np.isnan(self.ref_labels['labels'][label_name][frame_idx]['coords'][cam_idx])):
 
                     ref_label_dict = self.ref_labels['labels'][label_name]
                     label_dict = self.labels['labels'][label_name]
-                    point = ref_label_dict[frame_idx][cam_idx]
+                    point = ref_label_dict[frame_idx]['coords'][cam_idx]
                     subwin.draw_label(point[0], point[1], label_name, label_type="ref_label")
-    
+
                     if frame_idx in label_dict and \
-                            not np.any(np.isnan(label_dict[frame_idx][cam_idx])):
-                        line_coords = np.concatenate((label_dict[frame_idx][(cam_idx,), :],
-                                                      ref_label_dict[frame_idx][(cam_idx,), :]), axis=0)
+                            not np.any(np.isnan(label_dict[frame_idx]['coords'][cam_idx])):
+                        line_coords = np.concatenate((label_dict[frame_idx]['coords'][(cam_idx,), :],
+                                                      ref_label_dict[frame_idx]['coords'][(cam_idx,), :]), axis=0)
                         logger.log(logging.INFO, f"Drawing line, {line_coords.shape}, {line_coords}")
                         # TODO: test this
                         subwin.draw_label(*line_coords.T, label_name, label_type='error_line')
+
+    def viewer_click(self, cam_idx:int, x:float, y:float, action:str = 'create_label'):
+        # Initialize array
+        fr_idx = self.get_frame_idx()
+        label_name = self.get_current_label()
+
+        match action:
+            case 'select_label':
+                coords = np.array([x, y], dtype=np.float64)
+                point_dists = []
+                frame_labels = label_lib.get_labels_from_frame(self.labels, frame_idx=fr_idx)
+                label_names = list(frame_labels.keys())
+                for ln, ld in frame_labels.items():
+                    if len(ld) > cam_idx and not np.any(np.isnan(ld[cam_idx])):
+                        point_dists.append(
+                            np.linalg.norm(ld[cam_idx] - coords))
+                    else:
+                        point_dists.append(np.inf)
+
+                self.set_current_label(label_names[np.argmin(point_dists)])
+
+            case 'create_label':
+                self.add_label([x, y], label_name, cam_idx, fr_idx)
+                self.viewer_plot_labels(label_names=[label_name])
+
+            case 'auto_label':
+                # TODO:
+                pass
+
+            case 'delete_label':
+                if self.user not in self.labels['labeler_list']:
+                    self.labels['labeler_list'].append(self.user)
+
+                label_dict = self.labels['labels'][label_name]
+                label_dict[fr_idx]['coords'][cam_idx, :] = np.nan
+                # For synchronisation, deletion time and user must be recorded
+                label_dict[fr_idx]['point_times'][cam_idx] = time.time()
+                label_dict[fr_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
+
+                self.viewer_plot_labels(label_names=[label_name])
+
+            case _:
+                logger.log(logging.WARNING, f'Unknown action {action} for cam_idx {cam_idx} '
+                                            f'and location {x}, {y}')
 
     def viewer_clear_labels(self):
         for cam_idx, cam_name in enumerate(self.get_camera_names()):
             self.subwindows[cam_name].clear_all_labels()
 
     def get_current_label(self):
-        selected_label = self.dock_controls.widgets['lists']['labels'].currentItem()
+        selected_label = self.dock_controls.list_labels.currentItem()
         if selected_label is not None:
             return selected_label.text()
         else:
-            return self.dock_controls.widgets['lists']['labels']
+            return None
+
+    def set_current_label(self, label:str or int):
+        match label:
+            case int():
+                pass
+            case str():
+                if label in self.dock_sketch.get_sketch_labels():
+                    label = list(self.dock_sketch.get_sketch_labels().keys()).index(label)
+                else:
+                    logger.log(logging.WARNING, f"Label name {label} not in the sketch!")
+            case _:
+                logger.log(logging.WARNING, f"Input {label} has unknown type")
+
+        self.dock_controls.list_labels.setCurrentRow(label)
+
 
     def fill_controls(self):
         # TODO: vmin, vmax
@@ -453,40 +509,38 @@ class MainWindow(QMainWindow):
         self.dock_controls.widgets['fields']['d_frame'].setText(str(self.d_frame))
 
         # Lists
-        list_labels = self.dock_controls.widgets['lists']['labels']
+        list_labels = self.dock_controls.list_labels
         list_labels.addItems(self.dock_sketch.get_sketch_labels())
-        list_labels.setCurrentRow(0)
 
     def connect_controls(self):
-        # TODO:
-        # self.widgets['canvases']['sketch'].mpl_connect('button_press_event',
-        #                                                lambda event: self.sketch_click(
-        #                                                    event))
-        # Buttons
         self.dock_controls.widgets['buttons']['home'].clicked.connect(
             self.viewer_zoom_reset)
         self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
             lambda: self.save_labels(None))
 
-        list_labels = self.dock_controls.widgets['lists']['labels']
+        list_labels = self.dock_controls.list_labels
 
-        # Sketches
+        # Sketches dock
         self.dock_sketch.sketch_clicked_signal.connect(list_labels.setCurrentRow)
 
+        # Control dock
         self.dock_controls.connect_widgets()
-
         list_labels.currentItemChanged.connect(self.label_select)
-
+        list_labels.setCurrentRow(0)
         self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(self.previous_frame)
         self.dock_controls.widgets['buttons']['next_frame'].clicked.connect(self.next_frame)
         self.dock_controls.widgets['fields']['current_frame'].returnPressed.connect(
             lambda: self.set_frame_idx(self.dock_controls.widgets['fields']['current_frame'].text()))
 
+        # Viewer
+        for _, subwin in self.subwindows.items():
+            subwin.mouse_clicked_signal.connect(self.viewer_click)
+
     def add_label(self, coords, label_name, cam_idx, fr_idx):
         # TODO
         pass
 
-    def save_labels(self, file:Path=None):
+    def save_labels(self, file: Path = None):
         if file is None:
             file = self.labels_folder / 'labels.yml'
 
@@ -507,10 +561,9 @@ class MainWindow(QMainWindow):
     def label_select(self):
         self.trigger_autosave_event()
         self.dock_sketch.update_sketch(current_label_name=self.get_current_label())
-        self.dock_controls.widgets['lists']['labels'].clearFocus()
+        self.dock_controls.list_labels.clearFocus()
         for _, subwin in self.subwindows.items():
-          subwin.set_current_label(label_name=self.get_current_label())
-        # self.viewer_plot_labels(label_names=[self.get_current_label()])
+            subwin.set_current_label(label_name=self.get_current_label())
 
     def next_frame(self):
         self.set_frame_idx(
@@ -545,6 +598,7 @@ class MainWindow(QMainWindow):
         exit_status = dict()
         exit_status['i_frame'] = self.get_frame_idx()
         np.save(self.labels_folder / 'exit_status.npy', exit_status)
+
 
 class UnsupportedFormatException(Exception):
     pass

@@ -1,14 +1,13 @@
 import logging
 import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtCore import pyqtSignal
-from PyQt5.Qt import Qt
-from PyQt5.QtWidgets import QMdiSubWindow
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtWidgets import QApplication, QMdiSubWindow
 
 logger = logging.getLogger(__name__)
 
 class ViewerSubWindow(QMdiSubWindow):
-    mouse_clicked_signal = pyqtSignal(float, float)
+    mouse_clicked_signal = pyqtSignal(int, float, float, str)
     plot_params = {
         'label': {'symbol':'o', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
         'current_label': {'symbol':'o', 'symbolBrush': 'darkgreen', 'symbolSize': 8, 'symbolPen': None},
@@ -16,12 +15,13 @@ class ViewerSubWindow(QMdiSubWindow):
         'error_line': {}
     }
 
-    def __init__(self, reader, parent=None, img_item=None):
+    def __init__(self, index:int, reader, parent=None, img_item=None):
 
         super().__init__(parent)
         # TODO: It will be ideal to have minimize and maximize buttons without close button
         # self.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowTitleHint)
 
+        self.index = index
         self.reader = reader
         self.img_item = img_item
         self.labels = {label_key: {} for label_key in self.plot_params}
@@ -59,12 +59,30 @@ class ViewerSubWindow(QMdiSubWindow):
     def mouse_clicked(self, event):
         vb = self.plot_wget.plotItem.vb
         scene_coords = event.scenePos()
+        modifiers = QApplication.keyboardModifiers()
+
         if self.plot_wget.sceneBoundingRect().contains(scene_coords):
             mouse_point = vb.mapSceneToView(scene_coords)
-            self.mouse_clicked_signal.emit(mouse_point.x(), mouse_point.y())
-            # logger.log(logging.INFO, f"Click at  {mouse_point.x()}, {mouse_point.y()}")
 
-    def set_current_label(self, label_name):
+            # Left click
+            if event.button() == 1:
+                if modifiers == Qt.ShiftModifier:
+                    action_str = 'select_label'
+                elif modifiers == Qt.AltModifier:
+                    action_str = 'auto_label'
+                else:
+                    action_str = 'create_label'
+            # Right click
+            elif event.button() == 2:
+                # TODO: should test
+                action_str = 'delete_label'
+            else:
+                return
+
+            self.mouse_clicked_signal.emit(self.index, mouse_point.x(), mouse_point.y(), action_str)
+        # logger.log(logging.INFO, f"Click at  {mouse_point.x()}, {mouse_point.y()}")
+
+    def set_current_label(self, label_name: str or None):
         label_type = 'current_label'
         if  len(self.labels[label_type]) and label_name not in self.labels[label_type]:
             old_label_name = list(self.labels[label_type].keys())[0]
