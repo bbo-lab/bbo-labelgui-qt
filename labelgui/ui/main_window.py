@@ -177,12 +177,6 @@ class MainWindow(QMainWindow):
         else:
             logger.log(logging.WARNING, f'Autoloading failed. Labels file {labels_file} does not exist.')
 
-        # Add the label_names from sketch
-        # TODO: Could be uncessary
-        for label_name, _ in self.dock_sketch.get_sketch_labels().items():
-            if label_name not in self.labels['labels']:
-                self.labels['labels'][label_name] = {}
-
     def load_ref_labels(self):
         ref_labels_file = self.cfg['reference_labels_file']
         if isinstance(ref_labels_file, bool) and ref_labels_file:
@@ -297,16 +291,6 @@ class MainWindow(QMainWindow):
         self.viewer_plot_labels(current_label_name="")
         self.viewer_plot_ref_labels()
 
-    @DeprecationWarning
-    def init_colors(self):
-        colors = dict(mpl_colors.BASE_COLORS, **mpl_colors.CSS4_COLORS)
-        # Sort colors by hue, saturation, value and name.
-        by_hsv = sorted((tuple(mpl_colors.rgb_to_hsv(mpl_colors.to_rgba(color)[:3])), name)
-                        for name, color in colors.items())
-        sorted_names = [name for hsv, name in by_hsv]
-        for i in range(24, -1, -1):
-            self.colors = self.colors + sorted_names[i::24]
-
     def get_valid_frame_idx(self, frame_idx: int):
         return self.allowed_frames[np.argmin(np.abs(self.allowed_frames - frame_idx))]
 
@@ -347,9 +331,9 @@ class MainWindow(QMainWindow):
                 self.auto_save_counter = 0
 
     def viewer_change_frame(self):
-        self.viewer_update_images()
-
         self.viewer_clear_labels()
+
+        self.viewer_update_images()
         self.viewer_plot_labels()
         self.viewer_plot_ref_labels()
 
@@ -378,7 +362,8 @@ class MainWindow(QMainWindow):
                         labeler = self.labels['labeler_list'][label_dict[frame_idx]['labeler'][cam_idx]]
                         logger.log(logging.INFO, f"label {label_name} {frame_idx} {labeler}: {point}")
                         subwin.draw_label(point[0], point[1], label_name,
-                                          label_type='current_label' if current_label_name == label_name else 'label')
+                                          current_label=current_label_name == label_name)
+                        subwin.clear_label(label_name, label_type='guess_label')
 
                 else:
                     # Plot a guess position based on previous or/and next frames
@@ -405,8 +390,8 @@ class MainWindow(QMainWindow):
 
                     if ~np.any(np.isnan(point)):
                         subwin.draw_label(point[0][0], point[0][1], label_name,
-                                          guess=True,
-                                          label_type='current_label' if current_label_name == label_name else 'label')
+                                          label_type='guess_label',
+                                          current_label=current_label_name == label_name)
 
     def viewer_plot_ref_labels(self):
         # Plot reference labels
@@ -453,7 +438,7 @@ class MainWindow(QMainWindow):
                 self.set_current_label(label_names[np.argmin(point_dists)])
 
             case 'create_label':
-                self.add_label([x, y], label_name, cam_idx, fr_idx)
+                self.add_label([x, y], label_name, fr_idx, cam_idx)
                 self.viewer_plot_labels(label_names=[label_name])
 
             case 'auto_label':
@@ -464,13 +449,19 @@ class MainWindow(QMainWindow):
                 if self.user not in self.labels['labeler_list']:
                     self.labels['labeler_list'].append(self.user)
 
-                label_dict = self.labels['labels'][label_name]
-                label_dict[fr_idx]['coords'][cam_idx, :] = np.nan
-                # For synchronisation, deletion time and user must be recorded
-                label_dict[fr_idx]['point_times'][cam_idx] = time.time()
-                label_dict[fr_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
+                label_dict = self.labels['labels'].get(label_name, {})
+                if (fr_idx in label_dict and
+                        not np.any(np.isnan(label_dict[fr_idx]['coords'][cam_idx, :]))):
+                    # Only delete the label if it already exists
 
-                self.viewer_plot_labels(label_names=[label_name])
+                    label_dict[fr_idx]['coords'][cam_idx, :] = np.nan
+                    # For synchronisation, deletion time and user must be recorded
+                    label_dict[fr_idx]['point_times'][cam_idx] = time.time()
+                    label_dict[fr_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
+
+                    cam_name = self.get_camera_names()[cam_idx]
+                    self.subwindows[cam_name].clear_label(label_name=label_name,
+                                                          label_type='label')
 
             case _:
                 logger.log(logging.WARNING, f'Unknown action {action} for cam_idx {cam_idx} '
@@ -536,15 +527,29 @@ class MainWindow(QMainWindow):
         for _, subwin in self.subwindows.items():
             subwin.mouse_clicked_signal.connect(self.viewer_click)
 
-    def add_label(self, coords, label_name, cam_idx, fr_idx):
-        # TODO
-        pass
+    def add_label(self, coords, label_name, fr_idx, cam_idx):
+        data_shape = (len(self.cameras), 2)
+
+        label_dict = self.labels['labels'].setdefault(label_name, {})
+        frame_dict = label_dict.setdefault(fr_idx, {
+            'coords': np.full(data_shape, np.nan, dtype=np.float64),
+            'point_times': np.full(data_shape[0], 0, dtype=np.float64),
+            'labeler': np.full(data_shape[0], 0, dtype=np.uint16)
+        })
+
+        if self.user not in self.labels["labeler_list"]:
+            self.labels["labeler_list"].append(self.user)
+        frame_dict['labeler'][cam_idx] = self.labels["labeler_list"].index(self.user)
+        frame_dict['point_times'][cam_idx] = time.time()
+        coords = np.array(coords, dtype=np.float64)
+        frame_dict['coords'][cam_idx] = coords
 
     def save_labels(self, file: Path = None):
         if file is None:
             file = self.labels_folder / 'labels.yml'
 
         label_lib.save(file, self.labels)
+        logger.log(logging.INFO, 'Saved labels ({:s})'.format(file.as_posix()))
 
     def save_labels_as(self):
         """ MenuBar > Save As..."""
@@ -579,20 +584,21 @@ class MainWindow(QMainWindow):
 
     # Shortcuts
     def keyPressEvent(self, event):
-        if self.cfg['button_next'] and event.key() == Qt.Key_D:
-            self.next_frame()
-        elif self.cfg['button_previous'] and event.key() == Qt.Key_A:
-            self.previous_frame()
-        else:
-            pass
-
         if not (event.isAutoRepeat()):
-            if self.cfg['button_next_label'] and event.key() == Qt.Key_N:
+            if self.cfg['button_save_labels'] and event.key() == Qt.Key_S:
+                self.save_labels()
+            if self.cfg['button_next'] and event.key() == Qt.Key_D:
+                self.next_frame()
+            elif self.cfg['button_previous'] and event.key() == Qt.Key_A:
+                self.previous_frame()
+            elif self.cfg['button_next_label'] and event.key() == Qt.Key_N:
                 self.dock_controls.widgets['buttons']['next_label'].click()
             elif self.cfg['button_previous_label'] and event.key() == Qt.Key_P:
                 self.dock_controls.widgets['buttons']['previous_label'].click()
             elif self.cfg['button_home'] and event.key() == Qt.Key_H:
                 self.dock_controls.widgets['buttons']['home'].click()
+        else:
+            logger.log(logging.WARNING, "Auto-repeat is not supported")
 
     def closeEvent(self, event):
         exit_status = dict()

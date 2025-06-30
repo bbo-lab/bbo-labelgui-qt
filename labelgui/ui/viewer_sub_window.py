@@ -8,10 +8,13 @@ logger = logging.getLogger(__name__)
 
 class ViewerSubWindow(QMdiSubWindow):
     mouse_clicked_signal = pyqtSignal(int, float, float, str)
+    # Necessary to follow camelCase for keys here, for compatibility with pyqtgraph
     plot_params = {
         'label': {'symbol':'o', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
-        'current_label': {'symbol':'o', 'symbolBrush': 'darkgreen', 'symbolSize': 8, 'symbolPen': None},
+        'guess_label': {'symbol':'+', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
         'ref_label': {'symbol':'x', 'symbolBrush': 'red', 'symbolSize': 6, 'symbolPen': None},
+
+        'current_label': {'symbolBrush': 'darkgreen', 'symbolSize': 8},
         'error_line': {}
     }
 
@@ -25,7 +28,7 @@ class ViewerSubWindow(QMdiSubWindow):
         self.reader = reader
         self.img_item = img_item
         self.labels = {label_key: {} for label_key in self.plot_params}
-        self.labels['current_label'] = SingleItemDict()
+        self.current_label_name = None
 
         self.plot_wget = pg.PlotWidget(enableMenu=False)
         self.plot_wget.invertY(True)
@@ -47,14 +50,15 @@ class ViewerSubWindow(QMdiSubWindow):
         else:
             self.img_item.setImage(img, autoLevels=img.dtype != np.uint8)
 
-    def draw_label(self, x:float, y:float, label_name:str, label_type='label', guess=False):
+    def draw_label(self, x:float, y:float, label_name:str, label_type='label', current_label=False):
         if label_name not in self.labels[label_type]:
             label_params = self.plot_params[label_type].copy()
-            if guess:
-                label_params['symbol'] = '+'
             self.labels[label_type][label_name] = self.plot_wget.plot([x], [y], **label_params)
         else:
             self.labels[label_type][label_name].setData([x], [y])
+
+        if current_label:
+            self.set_current_label(label_name)
 
     def mouse_clicked(self, event):
         vb = self.plot_wget.plotItem.vb
@@ -83,22 +87,19 @@ class ViewerSubWindow(QMdiSubWindow):
         # logger.log(logging.INFO, f"Click at  {mouse_point.x()}, {mouse_point.y()}")
 
     def set_current_label(self, label_name: str or None):
-        label_type = 'current_label'
-        if  len(self.labels[label_type]) and label_name not in self.labels[label_type]:
-            old_label_name = list(self.labels[label_type].keys())[0]
-            old_label_item = self.labels[label_type].pop(old_label_name)
-            old_label_item.setData(*old_label_item.getData(),
-                                   symbolBrush=self.plot_params['label']['symbolBrush'],
-                                   symbolSize=self.plot_params['label']['symbolSize'])
-            self.labels['label'][old_label_name] = old_label_item
+        for label_type in ['label', 'guess_label']:
+            # Change the status of the old 'current_label'
+            if self.current_label_name in self.labels[label_type]:
+                params = self.plot_params[label_type].copy()
+                self.labels[label_type][self.current_label_name].setSymbolBrush(params['symbolBrush'])
+                self.labels[label_type][self.current_label_name].setSymbolSize(params['symbolSize'])
+            # Set new 'current_label'
+            if label_name in self.labels[label_type]:
+                params = self.plot_params['current_label'].copy()
+                self.labels[label_type][label_name].setSymbolBrush(params['symbolBrush'])
+                self.labels[label_type][label_name].setSymbolSize(params['symbolSize'])
 
-        label_type = 'label'
-        if label_name in self.labels[label_type]:
-            label_item = self.labels[label_type].pop(label_name)
-            label_item.setData(*label_item.getData(),
-                               symbolBrush=self.plot_params['current_label']['symbolBrush'],
-                               symbolSize=self.plot_params['current_label']['symbolSize'])
-            self.labels['current_label'][label_name] = label_item
+        self.current_label_name = label_name
 
     def clear_label(self, label_name:str, label_type='label'):
         # Remove the label from the dictionary and the view if it exists
@@ -108,20 +109,3 @@ class ViewerSubWindow(QMdiSubWindow):
     def clear_all_labels(self):
         self.plot_wget.clearPlots()
         self.labels = {label_key: {} for label_key in self.plot_params}
-
-
-class SingleItemDict(dict):
-    def __setitem__(self, key, value):
-        # Allow if empty, or replacing existing key
-        if len(self) == 0 or key in self:
-            super().__setitem__(key, value)
-        else:
-            raise ValueError("SingleItemDict can only contain one item.")
-
-    def update(self, *args, **kwargs):
-        # Only allow update if result will have at most one unique key
-        new_items = dict(*args, **kwargs)
-        combined_keys = set(self.keys()) | set(new_items.keys())
-        if len(combined_keys) > 1:
-            raise ValueError("SingleItemDict can only contain one item.")
-        super().update(new_items)
