@@ -80,7 +80,7 @@ class ControlsDock(QDockWidget):
             button_key = button_text
         self.widgets['buttons'][button_key] = button_widget
 
-    def connect_widgets(self):
+    def connect_label_buttons(self):
         ll = self.list_labels
         self.widgets['buttons']['next_label'].clicked.connect(lambda:
                                                               ll.setCurrentRow((ll.currentRow() + 1) % ll.count()))

@@ -42,11 +42,12 @@ class MainWindow(QMainWindow):
         self.neighbor_points = {}
         self.auto_save_counter = 0
 
-        # init GUI
+        # Docks
         self.mdi = QMdiArea()
         self.dock_sketch = SketchDock()
         self.dock_controls = ControlsDock()
 
+        # Menus
         session_menu = self.menuBar().addMenu("&File")
         session_menu.addAction("Save Labels As...", self.save_labels_as)
 
@@ -72,32 +73,31 @@ class MainWindow(QMainWindow):
 
         # Data load status
         self.recordings_loaded = False
-        self.sketch_loaded = False
         self.labels_loaded = False
         self.GUI_loaded = False
 
         # Loaded data
         self.init_files_folders()
-        self.load_sketch(sketch_file=self.drive / Path(self.cfg['sketch_file']))
+        self.dock_sketch.load_sketches(sketch_files=[self.drive / Path(file)
+                                                     for file in self.cfg['sketch_files']])
 
         load_labels_file = self.cfg["load_labels_file"]
         self.load_labels(labels_file=Path(load_labels_file) if isinstance(load_labels_file, str) else None)
         self.load_ref_labels()
 
-        # GUI layout
-        self.setCentralWidget(self.mdi)
-        self.set_docks_layout()
-
         self.dock_sketch.init_sketch()
         self.init_viewer()
         self.fill_controls()
         self.connect_controls()
-        self.GUI_loaded = True
 
+        # GUI layout
+        self.setCentralWidget(self.mdi)
+        self.set_docks_layout()
         self.showMaximized()
         self.setFocus()
         self.setWindowTitle('Labeling GUI')
 
+        self.GUI_loaded = True
         self.sync = sync
         self.mqtt_connect()
 
@@ -191,15 +191,6 @@ class MainWindow(QMainWindow):
             self.ref_labels = label_lib.load(ref_labels_file, v0_format=False)
         else:
             logger.log(logging.WARNING, f"Reference labels file {ref_labels_file.as_posix()} not found")
-
-    def load_sketch(self, sketch_file: Path):
-        # load sketch
-        if sketch_file.exists():
-            self.dock_sketch.sketch = np.load(sketch_file.as_posix(), allow_pickle=True)[()]
-            self.dock_sketch.set_sketch_zoom()
-            self.sketch_loaded = True
-        else:
-            logger.log(logging.WARNING, f'Autoloading failed. Sketch file {sketch_file} does not exist.')
 
     def load_recordings(self, files: List[Path]):
         cameras = []
@@ -495,27 +486,30 @@ class MainWindow(QMainWindow):
 
     def fill_controls(self):
         # TODO: vmin, vmax
-        # Fields
+        # Sketches dock
+        self.dock_sketch.fill_sketches_combobox()
+
+        # Controls dock
         self.dock_controls.widgets['fields']['current_frame'].setText(str(self.get_frame_idx()))
         self.dock_controls.widgets['fields']['d_frame'].setText(str(self.d_frame))
-
-        # Lists
         list_labels = self.dock_controls.list_labels
         list_labels.addItems(self.dock_sketch.get_sketch_labels())
 
     def connect_controls(self):
+        list_labels = self.dock_controls.list_labels
+
+        # Sketches dock
+        self.dock_sketch.connect_canvas()
+        self.dock_sketch.combobox_sketches.currentIndexChanged.connect(self.sketch_select)
+        self.dock_sketch.sketch_clicked_signal.connect(list_labels.setCurrentRow)
+
+        # Control dock
         self.dock_controls.widgets['buttons']['home'].clicked.connect(
             self.viewer_zoom_reset)
         self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
             lambda: self.save_labels(None))
 
-        list_labels = self.dock_controls.list_labels
-
-        # Sketches dock
-        self.dock_sketch.sketch_clicked_signal.connect(list_labels.setCurrentRow)
-
-        # Control dock
-        self.dock_controls.connect_widgets()
+        self.dock_controls.connect_label_buttons()
         list_labels.currentItemChanged.connect(self.label_select)
         list_labels.setCurrentRow(0)
         self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(self.previous_frame)
@@ -533,6 +527,7 @@ class MainWindow(QMainWindow):
         label_dict = self.labels['labels'].setdefault(label_name, {})
         frame_dict = label_dict.setdefault(fr_idx, {
             'coords': np.full(data_shape, np.nan, dtype=np.float64),
+            # TODO: check with kay about the dtype of times
             'point_times': np.full(data_shape[0], 0, dtype=np.float64),
             'labeler': np.full(data_shape[0], 0, dtype=np.uint16)
         })
@@ -562,6 +557,19 @@ class MainWindow(QMainWindow):
         # Reset view in all the subwindows
         for _, subwin in self.subwindows.items():
             subwin.plot_wget.autoRange()
+
+    def sketch_select(self):
+        self.trigger_autosave_event()
+        self.dock_sketch.clear_sketch()
+        self.dock_sketch.current_sketch_idx = self.dock_sketch.combobox_sketches.currentIndex()
+        self.dock_sketch.init_sketch()
+
+        list_labels = self.dock_controls.list_labels
+        list_labels.currentItemChanged.disconnect()
+        list_labels.clear()
+        list_labels.addItems(self.dock_sketch.get_sketch_labels())
+        list_labels.currentItemChanged.connect(self.label_select)
+        list_labels.setCurrentRow(0)
 
     def label_select(self):
         self.trigger_autosave_event()
