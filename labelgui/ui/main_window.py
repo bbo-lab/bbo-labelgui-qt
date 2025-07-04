@@ -11,10 +11,9 @@ import svidreader
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QMdiArea, \
     QFileDialog, \
-    QMainWindow, QWidget, QVBoxLayout
+    QMainWindow
 from bbo import label_lib, path_management as bbo_pm
 from bbo.yaml import load as yaml_load
-from matplotlib import colors as mpl_colors
 
 from labelgui.misc import archive_cfg, read_video_meta
 from labelgui.select_user import SelectUserWindow
@@ -300,7 +299,7 @@ class MainWindow(QMainWindow):
         if mqtt_publish:
             self.mqtt_publish()
 
-    def set_d_frame(self, df:int):
+    def set_d_frame(self, df: int):
         pass
         # self.d_frame = df
         # self.allowed_frames = np.arange(self.min_frame, self.max_frame, self.d_frame, dtype=int)
@@ -354,14 +353,14 @@ class MainWindow(QMainWindow):
                 label_dict = self.labels['labels'].get(label_name, {})
 
                 if frame_idx in label_dict and \
-                    not np.any(np.isnan(label_dict[frame_idx]['coords'][cam_idx])):
-                        # Plot actual/annotated labels
-                        point = label_dict[frame_idx]['coords'][cam_idx, :]
-                        labeler = self.labels['labeler_list'][label_dict[frame_idx]['labeler'][cam_idx]]
-                        logger.log(logging.INFO, f"label {label_name} {frame_idx} {labeler}: {point}")
-                        subwin.draw_label(point[0], point[1], label_name,
-                                          current_label=current_label_name == label_name)
-                        subwin.clear_label(label_name, label_type='guess_label')
+                        not np.any(np.isnan(label_dict[frame_idx]['coords'][cam_idx])):
+                    # Plot actual/annotated labels
+                    point = label_dict[frame_idx]['coords'][cam_idx, :]
+                    labeler = self.labels['labeler_list'][label_dict[frame_idx]['labeler'][cam_idx]]
+                    logger.log(logging.INFO, f"label {label_name} {frame_idx} {labeler}: {point}")
+                    subwin.draw_label(point[0], point[1], label_name,
+                                      current_label=current_label_name == label_name)
+                    subwin.clear_label(label_name, label_type='guess_label')
 
                 else:
                     # Plot a guess position based on previous or/and next frames
@@ -415,7 +414,7 @@ class MainWindow(QMainWindow):
                         # TODO: test this
                         subwin.draw_label(*line_coords.T, label_name, label_type='error_line')
 
-    def viewer_click(self, cam_idx:int, x:float, y:float, action:str = 'create_label'):
+    def viewer_click(self, cam_idx: int, x: float, y: float, action: str = 'create_label'):
         # Initialize array
         fr_idx = self.get_frame_idx()
         label_name = self.get_current_label()
@@ -476,7 +475,7 @@ class MainWindow(QMainWindow):
         else:
             return None
 
-    def set_current_label(self, label:str or int):
+    def set_current_label(self, label: str or int):
         match label:
             case int():
                 pass
@@ -519,7 +518,7 @@ class MainWindow(QMainWindow):
             lambda: self.save_labels(None))
         self.dock_controls.widgets['buttons']['home'].clicked.connect(
             self.viewer_zoom_reset)
-    
+
         self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(self.previous_frame)
         self.dock_controls.widgets['buttons']['next_frame'].clicked.connect(self.next_frame)
         self.dock_controls.widgets['fields']['current_frame'].returnPressed.connect(

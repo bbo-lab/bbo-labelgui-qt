@@ -1,6 +1,6 @@
 from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
-                             QListWidget, QPushButton, QComboBox, QAbstractItemView, QDockWidget)
+                             QPushButton, QComboBox, QDockWidget)
 
 
 class ControlsDock(QDockWidget):
@@ -44,7 +44,7 @@ class ControlsDock(QDockWidget):
 
         self.setWidget(main_widget)
 
-    def add_label(self, label_text:str, row_idx: int, col_idx: int, label_key=None):
+    def add_label(self, label_text: str, row_idx: int, col_idx: int, label_key=None):
         label_widget = QLabel(label_text, self)
         self.layout_grid.addWidget(label_widget, row_idx, col_idx, 1, 1)
         if label_key is None:
@@ -58,7 +58,7 @@ class ControlsDock(QDockWidget):
         self.layout_grid.addWidget(field_widget, row_idx, col_idx, 1, 1)
         self.widgets['fields'][field_key] = field_widget
 
-    def add_button(self, button_text:str, row_idx:int, col_idx, button_key=None):
+    def add_button(self, button_text: str, row_idx: int, col_idx, button_key=None):
         button_widget = QPushButton(button_text, self)
         self.layout_grid.addWidget(button_widget, row_idx, col_idx, 1, 1)
         if button_key is None:

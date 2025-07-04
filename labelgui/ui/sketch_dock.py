@@ -1,14 +1,12 @@
-from PyQt5.QtWidgets import (QWidget, QDockWidget, QVBoxLayout, QComboBox,
-                             QListWidget, QHBoxLayout, QAbstractItemView, QPushButton)
-from PyQt5.QtCore import pyqtSignal
-import numpy as np
-from typing import List, Dict, Optional
 import logging
 from pathlib import Path
+from typing import List
 
-from matplotlib.figure import Figure
+import numpy as np
+from PyQt5.QtWidgets import (QWidget, QDockWidget, QVBoxLayout, QComboBox,
+                             QListWidget, QHBoxLayout, QAbstractItemView, QPushButton)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
-
+from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +130,7 @@ class SketchDock(QDockWidget):
                                                            color='orange',
                                                            markersize=5,
                                                            zorder=1)
-            
+
         # Init highlight markers
         highlight_dot_params = {
             'color': 'darkgreen',

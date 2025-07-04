@@ -1,8 +1,8 @@
-from pathlib import Path
 import shutil
+from pathlib import Path
+
 import numpy as np
 import yaml
-
 from bbo.yaml import load as yaml_load
 
 

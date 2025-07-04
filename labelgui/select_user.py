@@ -1,12 +1,10 @@
 import os
+from glob import glob
 from pathlib import Path
 
+import yaml
 from PyQt5.QtGui import QGuiApplication
 from PyQt5.QtWidgets import QDialog, QGridLayout, QComboBox, QSizePolicy, QPushButton
-
-from glob import glob
-
-import yaml
 
 
 class SelectUserWindow(QDialog):
@@ -33,7 +31,7 @@ class SelectUserWindow(QDialog):
         self.job_combobox = QComboBox()
         self.job_combobox.setDisabled(True)
         self.job_combobox.setSizePolicy(QSizePolicy.Expanding,
-                                         QSizePolicy.Preferred)
+                                        QSizePolicy.Preferred)
         self.selecting_layout.addWidget(self.job_combobox)
 
         self.selecting_button = QPushButton('Ok')
@@ -82,7 +80,6 @@ class SelectUserWindow(QDialog):
         with open(self.defaults_file, 'w') as fh:
             yaml.safe_dump(default_config, fh)
 
-
     @staticmethod
     def get_user_list(drive):
         user_list = sorted(os.listdir(drive / 'data' / 'user'))
@@ -92,7 +89,7 @@ class SelectUserWindow(QDialog):
         job_dir = self.drive / 'data' / 'user' / self.get_user() / 'jobs'
         if job_dir.is_dir():
             jobs = glob((job_dir / '*.yml').as_posix())
-            if len(jobs)>0:
+            if len(jobs) > 0:
                 jobs = sorted(jobs)
                 self.job_combobox.setDisabled(False)
                 self.job_names = [Path(j).stem for j in jobs]

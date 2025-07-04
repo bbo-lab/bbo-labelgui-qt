@@ -1,4 +1,5 @@
 import logging
+
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -6,19 +7,20 @@ from PyQt5.QtWidgets import QApplication, QMdiSubWindow, QLabel, QSpinBox, QWidg
 
 logger = logging.getLogger(__name__)
 
+
 class ViewerSubWindow(QMdiSubWindow):
     mouse_clicked_signal = pyqtSignal(int, float, float, str)
     # Necessary to follow camelCase for keys here, for compatibility with pyqtgraph
     plot_params = {
-        'label': {'symbol':'o', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
-        'guess_label': {'symbol':'+', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
-        'ref_label': {'symbol':'x', 'symbolBrush': 'red', 'symbolSize': 6, 'symbolPen': None},
+        'label': {'symbol': 'o', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
+        'guess_label': {'symbol': '+', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
+        'ref_label': {'symbol': 'x', 'symbolBrush': 'red', 'symbolSize': 6, 'symbolPen': None},
 
         'current_label': {'symbolBrush': 'darkgreen', 'symbolSize': 8},
         'error_line': {}
     }
 
-    def __init__(self, index:int, reader, parent=None, img_item=None):
+    def __init__(self, index: int, reader, parent=None, img_item=None):
 
         super().__init__(parent)
         # TODO: It will be ideal to have minimize and maximize buttons without close button
@@ -70,11 +72,11 @@ class ViewerSubWindow(QMdiSubWindow):
                                          autoLevels=img.dtype != np.uint8)
             self.plot_wget.addItem(self.img_item)
             self.plot_wget.setLimits(xMin=0, yMin=0,
-                                xMax=img_x, yMax=img_y)
+                                     xMax=img_x, yMax=img_y)
         else:
             self.img_item.setImage(img, autoLevels=img.dtype != np.uint8)
 
-    def draw_label(self, x:float, y:float, label_name:str, label_type='label', current_label=False):
+    def draw_label(self, x: float, y: float, label_name: str, label_type='label', current_label=False):
         if label_name not in self.labels[label_type]:
             label_params = self.plot_params[label_type].copy()
             self.labels[label_type][label_name] = self.plot_wget.plot([x], [y], **label_params)
@@ -125,7 +127,7 @@ class ViewerSubWindow(QMdiSubWindow):
 
         self.current_label_name = label_name
 
-    def clear_label(self, label_name:str, label_type='label'):
+    def clear_label(self, label_name: str, label_type='label'):
         # Remove the label from the dictionary and the view if it exists
         label_item = self.labels[label_type].pop(label_name, None)
         self.plot_wget.removeItem(label_item)
