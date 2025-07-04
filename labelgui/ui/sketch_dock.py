@@ -1,4 +1,5 @@
-from PyQt5.QtWidgets import QWidget, QDockWidget, QVBoxLayout, QComboBox, QSizePolicy
+from PyQt5.QtWidgets import (QWidget, QDockWidget, QVBoxLayout, QComboBox,
+                             QListWidget, QHBoxLayout, QAbstractItemView, QPushButton)
 from PyQt5.QtCore import pyqtSignal
 import numpy as np
 from typing import List, Dict, Optional
@@ -13,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 class SketchDock(QDockWidget):
-    sketch_clicked_signal = pyqtSignal(int)
 
     def __init__(self):
 
@@ -28,6 +28,10 @@ class SketchDock(QDockWidget):
             'highlight_dot': {},
             'highlight_circle': {}
         }
+        self.widgets = {
+            'buttons': {},
+            'lists': {}
+        }
         self.sketches = []
         self.current_sketch_idx = None
         self.sketches_loaded = False
@@ -37,7 +41,7 @@ class SketchDock(QDockWidget):
         self.sketch_zoom_dx = None
 
         main_widget = QWidget()
-        layout = QVBoxLayout(main_widget)
+        main_layout = QVBoxLayout(main_widget)
 
         self.graph_widgets['figs']['sketch'] = Figure()
         self.graph_widgets['canvas']['sketch'] = FigureCanvasQTAgg(self.graph_widgets['figs']['sketch'])
@@ -50,14 +54,28 @@ class SketchDock(QDockWidget):
         ax_sketch_zoom_dims = [1 / 3, 5 / 18, 2 / 3, 12 / 18]
         self.graph_widgets['axes']['sketch_zoom'] = self.graph_widgets['figs']['sketch'].add_axes(ax_sketch_zoom_dims)
 
-        layout.addWidget(self.graph_widgets['canvas']['sketch'])
+        main_layout.addWidget(self.graph_widgets['canvas']['sketch'])
 
         # Sketch selection combo
         self.combobox_sketches = QComboBox()
         self.combobox_sketches.setDisabled(True)
-        layout.addWidget(self.combobox_sketches)
+        main_layout.addWidget(self.combobox_sketches)
 
-        main_widget.setLayout(layout)
+        # Labels list display
+        self.list_labels = QListWidget()
+        self.list_labels.setSelectionMode(QAbstractItemView.SingleSelection)
+        main_layout.addWidget(self.list_labels)
+        main_layout.setStretchFactor(self.list_labels, 5)
+        self.widgets['lists']['labels'] = self.list_labels  # adding to widgets for completeness
+
+        button_widget = QWidget()
+        hbox = QHBoxLayout(button_widget)
+        self.widgets['buttons']['previous_label'] = QPushButton("Previous Label (P)", self)
+        hbox.addWidget(self.widgets['buttons']['previous_label'])
+        self.widgets['buttons']['next_label'] = QPushButton("Next Label (N)", self)
+        hbox.addWidget(self.widgets['buttons']['next_label'])
+        main_layout.addWidget(button_widget)
+
         self.setWidget(main_widget)
 
     def load_sketches(self, sketch_files: List[Path]):
@@ -141,13 +159,23 @@ class SketchDock(QDockWidget):
         self.graph_widgets['highlight_circle']['sketch_zoom'] = self.graph_widgets['axes']['sketch_zoom'].plot(
             [np.nan], [np.nan], **highlight_circle_params)[0]
 
-    def fill_sketches_combobox(self):
+    def fill_controls(self):
+        # Fill non-graphic controls
         self.combobox_sketches.setDisabled(False)
         self.combobox_sketches.addItems([f'Sketch {i:03d}'
                                          for i, _ in enumerate(self.sketches)])
 
+        self.list_labels.addItems(self.get_sketch_labels())
+
     def connect_canvas(self):
         self.graph_widgets['canvas']['sketch'].mpl_connect('button_press_event', self.sketch_click)
+
+    def connect_label_buttons(self):
+        ll = self.list_labels
+        self.widgets['buttons']['next_label'].clicked.connect(lambda:
+                                                              ll.setCurrentRow((ll.currentRow() + 1) % ll.count()))
+        self.widgets['buttons']['previous_label'].clicked.connect(lambda:
+                                                                  ll.setCurrentRow((ll.currentRow() - 1) % ll.count()))
 
     def update_sketch(self, current_label_name=None):
         # Updates labels on the sketch
@@ -196,7 +224,7 @@ class SketchDock(QDockWidget):
                 label_coordinates = self.get_sketch_label_coordinates()
                 dists = ((x - label_coordinates[:, 0]) ** 2 + (y - label_coordinates[:, 1]) ** 2) ** 0.5
                 label_index = np.argmin(dists)
-                self.sketch_clicked_signal.emit(label_index)
+                self.list_labels.setCurrentRow(label_index)
 
     def clear_sketch(self):
         for ax_key in ['sketch', 'sketch_zoom']:

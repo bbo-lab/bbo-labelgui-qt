@@ -3,10 +3,13 @@ allowed_cams: [0, 1]
 cam: 0
 min_frame: 0
 max_frame: 15000
-dFrame: 1
+d_frame: 1
 
 # SKETCH
-sketch_file: "{storage}/analysis/pose/data/sketch/20230525_sketch_hellenthal.npy"  # location wrt drive path
+sketch_files: [
+  "{storage}/analysis/pose/data/sketch/20230525_sketch_hellenthal.npy",  # location wrt drive path
+  "{storage}/analysis/pose/data/sketch/sketch.npy",
+  ]
 
 # VIDEOS
 dataset_name: "bc_20230524_N_2"  # If empty, takes name of recording folder

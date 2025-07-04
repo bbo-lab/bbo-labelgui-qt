@@ -10,58 +10,43 @@ class ControlsDock(QDockWidget):
         super().__init__("Controls")
         self.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
 
+        main_widget = QWidget()
         self.widgets = {
             'labels': {},
             'buttons': {},
             'fields': {},
             'lists': {}
         }
-        self.layout_grid = QGridLayout()
+        self.layout_grid = QGridLayout(main_widget)
 
         row = 0
-        self.add_label("vmin:", row, 1, "vmin")
-        self.add_label("vmax:", row, 2, "vmax")
+        self.combobox_recordings = QComboBox()
+        self.layout_grid.addWidget(self.combobox_recordings, row, 0, 1, 2)
 
         row += 1
-        self.add_field(row, 1, "vmin")
-        self.add_field(row, 2, "vmax")
-
-        row += 1
-        self.add_button("Save Labels (S)", row, 0, "save_labels")
-
-        self.list_labels = QListWidget()
-        self.list_labels.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.layout_grid.addWidget(self.list_labels, row, 1, 3, 2)
-        self.widgets['lists']['labels'] = self.list_labels  # adding to widgets for completeness
-
-        row += 3  # Giving space for the list_labels
-        self.add_button("Previous Label (P)", row, 1, "previous_label")
-        self.add_button("Next Label (N)", row, 2, "next_label")
-
-        row += 1
-        self.add_label("current frame:", row, 0, "current_frame")
-        self.add_label("dFrame:", row, 1, "d_frame")
-
-        row += 1
-        self.add_field(row, 0, "current_frame")
+        self.add_label("dFrame:", row, 0, "d_frame")
         self.add_field(row, 1, "d_frame")
 
         row += 1
+        self.add_label("current frame:", row, 0, "current_frame")
+        self.add_field(row, 1, "current_frame")
+
+        row += 1
         self.add_button("Previous Frame (A)", row, 0, "previous_frame")
-        self.add_button("Next Frame (D)", row, 1, "next_frame")
-        self.add_button("Home (H)", row, 2, "home")
+        self.add_button("Save Labels (S)", row, 1, "save_labels")
+
+        row += 1
+        self.add_button("Next Frame (D)", row, 0, "next_frame")
+        self.add_button("Home (H)", row, 1, "home")
 
         row += 1
         self.add_label("", row, 0, "labeler")
 
-        self.main_widget = QWidget()
-        self.main_widget.setLayout(self.layout_grid)
-        self.setWidget(self.main_widget)
-        self.setStyleSheet("background-color: white;")
+        self.setWidget(main_widget)
 
     def add_label(self, label_text:str, row_idx: int, col_idx: int, label_key=None):
         label_widget = QLabel(label_text, self)
-        self.layout_grid.addWidget(label_widget, row_idx, col_idx)
+        self.layout_grid.addWidget(label_widget, row_idx, col_idx, 1, 1)
         if label_key is None:
             label_key = label_text
         self.widgets['labels'][label_key] = label_widget
@@ -70,22 +55,15 @@ class ControlsDock(QDockWidget):
         field_widget = QLineEdit()
         if fill_int:
             field_widget.setValidator(QIntValidator())
-        self.layout_grid.addWidget(field_widget, row_idx, col_idx)
+        self.layout_grid.addWidget(field_widget, row_idx, col_idx, 1, 1)
         self.widgets['fields'][field_key] = field_widget
 
     def add_button(self, button_text:str, row_idx:int, col_idx, button_key=None):
         button_widget = QPushButton(button_text, self)
-        self.layout_grid.addWidget(button_widget, row_idx, col_idx)
+        self.layout_grid.addWidget(button_widget, row_idx, col_idx, 1, 1)
         if button_key is None:
             button_key = button_text
         self.widgets['buttons'][button_key] = button_widget
-
-    def connect_label_buttons(self):
-        ll = self.list_labels
-        self.widgets['buttons']['next_label'].clicked.connect(lambda:
-                                                              ll.setCurrentRow((ll.currentRow() + 1) % ll.count()))
-        self.widgets['buttons']['previous_label'].clicked.connect(lambda:
-                                                              ll.setCurrentRow((ll.currentRow() - 1) % ll.count()))
 
 
 def get_button_status(button: QPushButton):

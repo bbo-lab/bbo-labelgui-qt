@@ -2,7 +2,7 @@ import logging
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import QApplication, QMdiSubWindow
+from PyQt5.QtWidgets import QApplication, QMdiSubWindow, QLabel, QSpinBox, QWidget, QVBoxLayout, QHBoxLayout
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,35 @@ class ViewerSubWindow(QMdiSubWindow):
         self.labels = {label_key: {} for label_key in self.plot_params}
         self.current_label_name = None
 
+        main_widget = QWidget()
+        main_layout = QVBoxLayout(main_widget)
+
         self.plot_wget = pg.PlotWidget(enableMenu=False)
         self.plot_wget.invertY(True)
         self.plot_wget.showAxes(False)  # frame it with a full set of axes
         self.plot_wget.scene().sigMouseClicked.connect(self.mouse_clicked)
-        self.setWidget(self.plot_wget)
+        main_layout.addWidget(self.plot_wget)
+
+        # Contrast options
+        bottom_widget = QWidget()
+        bottom_layout = QHBoxLayout(bottom_widget)
+
+        self.label_vmin = QLabel("vmin")
+        self.box_vmin = QSpinBox()
+        self.box_vmin.setRange(0, 1)
+        self.box_vmin.setKeyboardTracking(False)
+        bottom_layout.addWidget(self.label_vmin)
+        bottom_layout.addWidget(self.box_vmin)
+
+        self.label_vmax = QLabel("vmax")
+        self.box_vmax = QSpinBox()
+        self.box_vmax.setRange(0, 1)
+        self.box_vmax.setKeyboardTracking(False)
+        bottom_layout.addWidget(self.label_vmax)
+        bottom_layout.addWidget(self.box_vmax)
+
+        main_layout.addWidget(bottom_widget)
+        self.setWidget(main_widget)
 
     def redraw_frame(self, frame_idx):
         img = self.reader.get_data(frame_idx)

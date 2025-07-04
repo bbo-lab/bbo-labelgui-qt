@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import logging
 import os
 import sys
@@ -13,7 +11,7 @@ import svidreader
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QMdiArea, \
     QFileDialog, \
-    QMainWindow
+    QMainWindow, QWidget, QVBoxLayout
 from bbo import label_lib, path_management as bbo_pm
 from bbo.yaml import load as yaml_load
 from matplotlib import colors as mpl_colors
@@ -48,18 +46,18 @@ class MainWindow(QMainWindow):
         self.dock_controls = ControlsDock()
 
         # Menus
-        session_menu = self.menuBar().addMenu("&File")
-        session_menu.addAction("Save Labels As...", self.save_labels_as)
+        self.session_menu = self.menuBar().addMenu("&File")
+        self.session_menu.addAction("Save Labels As...", self.save_labels_as)
 
-        view_menu = self.menuBar().addMenu("&View")
-        view_menu.addAction("&Tile", self.mdi.tileSubWindows)
-        view_menu.addAction("&Cascade", self.mdi.cascadeSubWindows)
+        self.view_menu = self.menuBar().addMenu("&View")
+        self.view_menu.addAction("&Tile", self.mdi.tileSubWindows)
+        self.view_menu.addAction("&Cascade", self.mdi.cascadeSubWindows)
 
         # Config
         self.load_cfg()
 
         # Load some params from config
-        self.d_frame = self.cfg['dFrame']
+        self.d_frame = self.cfg['d_frame']
         self.min_frame = int(self.cfg['min_frame'])
         self.max_frame = int(self.cfg['max_frame'])
         self.allowed_frames = np.arange(self.min_frame, self.max_frame, self.d_frame, dtype=int)
@@ -74,7 +72,7 @@ class MainWindow(QMainWindow):
         # Data load status
         self.recordings_loaded = False
         self.labels_loaded = False
-        self.GUI_loaded = False
+        self.gui_loaded = False
 
         # Loaded data
         self.init_files_folders()
@@ -97,11 +95,12 @@ class MainWindow(QMainWindow):
         self.setFocus()
         self.setWindowTitle('Labeling GUI')
 
-        self.GUI_loaded = True
+        self.gui_loaded = True
         self.sync = sync
         self.mqtt_connect()
 
         # TODO: ignoring calibration for now, will implement later if necessary
+        # TODO: Once we start labeling, it will be glity to add a new video. Is that okay?
 
     def load_cfg(self):
         if os.path.isdir(self.drive):
@@ -290,7 +289,7 @@ class MainWindow(QMainWindow):
             frame_idx = int(frame_idx)
         self.frame_idx = self.get_valid_frame_idx(frame_idx)
 
-        if self.GUI_loaded:
+        if self.gui_loaded:
             # Controls dock
             self.dock_controls.widgets['labels']['labeler'].setText(
                 ", ".join(label_lib.get_frame_labelers(self.labels, self.frame_idx))
@@ -301,10 +300,18 @@ class MainWindow(QMainWindow):
         if mqtt_publish:
             self.mqtt_publish()
 
+    def set_d_frame(self, df:int):
+        pass
+        # self.d_frame = df
+        # self.allowed_frames = np.arange(self.min_frame, self.max_frame, self.d_frame, dtype=int)
+
     def set_docks_layout(self):
-        # frame main
+        # Right dock area
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock_sketch)
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock_controls)
+
+        self.resizeDocks([self.dock_sketch, self.dock_controls],
+                         [500, 500], Qt.Horizontal)
 
     def trigger_autosave_event(self):
         # TODO: would it not be better to trigger it based on time/clock?
@@ -360,7 +367,7 @@ class MainWindow(QMainWindow):
                     # Plot a guess position based on previous or/and next frames
                     point = np.full((1, 2), np.nan)
 
-                    # Try to take mean of symmetrical situation
+                    # Try to take mean of a symmetrical situation
                     for offs in range(1, 4):
                         if frame_idx - offs in label_dict and \
                                 not np.any(np.isnan(label_dict[frame_idx - offs]['coords'][cam_idx])) and \
@@ -446,7 +453,7 @@ class MainWindow(QMainWindow):
                     # Only delete the label if it already exists
 
                     label_dict[fr_idx]['coords'][cam_idx, :] = np.nan
-                    # For synchronisation, deletion time and user must be recorded
+                    # For synchronization, deletion time and user must be recorded
                     label_dict[fr_idx]['point_times'][cam_idx] = time.time()
                     label_dict[fr_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
 
@@ -463,7 +470,7 @@ class MainWindow(QMainWindow):
             self.subwindows[cam_name].clear_all_labels()
 
     def get_current_label(self):
-        selected_label = self.dock_controls.list_labels.currentItem()
+        selected_label = self.dock_sketch.list_labels.currentItem()
         if selected_label is not None:
             return selected_label.text()
         else:
@@ -481,41 +488,46 @@ class MainWindow(QMainWindow):
             case _:
                 logger.log(logging.WARNING, f"Input {label} has unknown type")
 
-        self.dock_controls.list_labels.setCurrentRow(label)
-
+        self.dock_sketch.list_labels.setCurrentRow(label)
 
     def fill_controls(self):
         # TODO: vmin, vmax
         # Sketches dock
-        self.dock_sketch.fill_sketches_combobox()
+        self.dock_sketch.fill_controls()
 
         # Controls dock
         self.dock_controls.widgets['fields']['current_frame'].setText(str(self.get_frame_idx()))
         self.dock_controls.widgets['fields']['d_frame'].setText(str(self.d_frame))
-        list_labels = self.dock_controls.list_labels
-        list_labels.addItems(self.dock_sketch.get_sketch_labels())
+        if self.recordings_loaded:
+            recording_items = ['All cameras']
+            self.dock_controls.combobox_recordings.addItems(recording_items + [f'Camera {i:03d}'
+                                                                               for i, _ in enumerate(self.cameras)])
 
     def connect_controls(self):
-        list_labels = self.dock_controls.list_labels
+        list_labels = self.dock_sketch.list_labels
 
         # Sketches dock
         self.dock_sketch.connect_canvas()
+        self.dock_sketch.connect_label_buttons()
         self.dock_sketch.combobox_sketches.currentIndexChanged.connect(self.sketch_select)
-        self.dock_sketch.sketch_clicked_signal.connect(list_labels.setCurrentRow)
-
-        # Control dock
-        self.dock_controls.widgets['buttons']['home'].clicked.connect(
-            self.viewer_zoom_reset)
-        self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
-            lambda: self.save_labels(None))
-
-        self.dock_controls.connect_label_buttons()
         list_labels.currentItemChanged.connect(self.label_select)
         list_labels.setCurrentRow(0)
+
+        # Control dock
+        self.dock_controls.combobox_recordings.currentIndexChanged.connect(self.camera_select)
+        self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
+            lambda: self.save_labels(None))
+        self.dock_controls.widgets['buttons']['home'].clicked.connect(
+            self.viewer_zoom_reset)
+    
         self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(self.previous_frame)
         self.dock_controls.widgets['buttons']['next_frame'].clicked.connect(self.next_frame)
         self.dock_controls.widgets['fields']['current_frame'].returnPressed.connect(
             lambda: self.set_frame_idx(self.dock_controls.widgets['fields']['current_frame'].text()))
+        # TODO: figure out the function of d_frame when editable
+        self.dock_controls.widgets['fields']['d_frame'].setReadOnly(True)
+        # self.dock_controls.widgets['fields']['d_frame'].returnPressed.connect(
+        #    lambda: self.set_d_frame(int(self.dock_controls.widgets['fields']['d_frame'].text())))
 
         # Viewer
         for _, subwin in self.subwindows.items():
@@ -544,7 +556,7 @@ class MainWindow(QMainWindow):
             file = self.labels_folder / 'labels.yml'
 
         label_lib.save(file, self.labels)
-        logger.log(logging.INFO, 'Saved labels ({:s})'.format(file.as_posix()))
+        logger.log(logging.INFO, f'Saved labels ({file.as_posix()})')
 
     def save_labels_as(self):
         """ MenuBar > Save As..."""
@@ -558,13 +570,27 @@ class MainWindow(QMainWindow):
         for _, subwin in self.subwindows.items():
             subwin.plot_wget.autoRange()
 
+    def camera_select(self):
+        cam_idx = self.dock_controls.combobox_recordings.currentIndex()
+        match cam_idx:
+            case 0:
+                for _, win in self.subwindows.items():
+                    win.show()
+                self.mdi.tileSubWindows()
+                self.view_menu.setDisabled(False)
+            case _:
+                cam_name = self.get_camera_names()[cam_idx - 1]
+                self.subwindows[cam_name].showMaximized()
+                self.view_menu.setDisabled(True)
+
     def sketch_select(self):
         self.trigger_autosave_event()
         self.dock_sketch.clear_sketch()
         self.dock_sketch.current_sketch_idx = self.dock_sketch.combobox_sketches.currentIndex()
         self.dock_sketch.init_sketch()
+        self.dock_sketch.combobox_sketches.clearFocus()
 
-        list_labels = self.dock_controls.list_labels
+        list_labels = self.dock_sketch.list_labels
         list_labels.currentItemChanged.disconnect()
         list_labels.clear()
         list_labels.addItems(self.dock_sketch.get_sketch_labels())
@@ -574,7 +600,7 @@ class MainWindow(QMainWindow):
     def label_select(self):
         self.trigger_autosave_event()
         self.dock_sketch.update_sketch(current_label_name=self.get_current_label())
-        self.dock_controls.list_labels.clearFocus()
+        self.dock_sketch.list_labels.clearFocus()
         for _, subwin in self.subwindows.items():
             subwin.set_current_label(label_name=self.get_current_label())
 
@@ -592,7 +618,7 @@ class MainWindow(QMainWindow):
 
     # Shortcuts
     def keyPressEvent(self, event):
-        if not (event.isAutoRepeat()):
+        if not event.isAutoRepeat():
             if self.cfg['button_save_labels'] and event.key() == Qt.Key_S:
                 self.save_labels()
             if self.cfg['button_next'] and event.key() == Qt.Key_D:
@@ -600,17 +626,16 @@ class MainWindow(QMainWindow):
             elif self.cfg['button_previous'] and event.key() == Qt.Key_A:
                 self.previous_frame()
             elif self.cfg['button_next_label'] and event.key() == Qt.Key_N:
-                self.dock_controls.widgets['buttons']['next_label'].click()
+                self.dock_sketch.widgets['buttons']['next_label'].click()
             elif self.cfg['button_previous_label'] and event.key() == Qt.Key_P:
-                self.dock_controls.widgets['buttons']['previous_label'].click()
+                self.dock_sketch.widgets['buttons']['previous_label'].click()
             elif self.cfg['button_home'] and event.key() == Qt.Key_H:
                 self.dock_controls.widgets['buttons']['home'].click()
         else:
             logger.log(logging.WARNING, "Auto-repeat is not supported")
 
     def closeEvent(self, event):
-        exit_status = dict()
-        exit_status['i_frame'] = self.get_frame_idx()
+        exit_status = {'i_frame': self.get_frame_idx()}
         np.save(self.labels_folder / 'exit_status.npy', exit_status)
 
 
