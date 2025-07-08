@@ -1,4 +1,5 @@
 import logging
+import threading
 
 import numpy as np
 import pyqtgraph as pg
@@ -24,11 +25,12 @@ class ViewerSubWindow(QMdiSubWindow):
 
         super().__init__(parent)
         # TODO: It will be ideal to have minimize and maximize buttons without close button
-        # self.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+        self.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowTitleHint)
 
         self.index = index
         self.reader = reader
         self.img_item = img_item
+        self.frame_index = 0
         self.labels = {label_key: {} for label_key in self.plot_params}
         self.current_label_name = None
 
@@ -44,37 +46,41 @@ class ViewerSubWindow(QMdiSubWindow):
         # Contrast options
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout(bottom_widget)
+        bottom_layout.addWidget(QLabel("Intensity:"))
 
         self.label_vmin = QLabel("vmin")
         self.box_vmin = QSpinBox()
-        self.box_vmin.setRange(0, 1)
         self.box_vmin.setKeyboardTracking(False)
         bottom_layout.addWidget(self.label_vmin)
         bottom_layout.addWidget(self.box_vmin)
 
         self.label_vmax = QLabel("vmax")
         self.box_vmax = QSpinBox()
-        self.box_vmax.setRange(0, 1)
         self.box_vmax.setKeyboardTracking(False)
         bottom_layout.addWidget(self.label_vmax)
         bottom_layout.addWidget(self.box_vmax)
 
+        self.set_intensity_range()
         main_layout.addWidget(bottom_widget)
         self.setWidget(main_widget)
 
-    def redraw_frame(self, frame_idx):
+    def redraw_frame(self, frame_idx=None):
+        if frame_idx is None and self.frame_index is not None:
+            frame_idx = self.frame_index
+
+        self.frame_index = frame_idx
         img = self.reader.get_data(frame_idx)
+        img = np.clip(img, self.box_vmin.value(), self.box_vmax.value())
 
         if self.img_item is None:
-            # img_size = np.max(img.shape[:2])
             img_y, img_x = img.shape[:2]
             self.img_item = pg.ImageItem(img, axisOrder='row-major',
-                                         autoLevels=img.dtype != np.uint8)
+                                         autoLevels=True)
             self.plot_wget.addItem(self.img_item)
             self.plot_wget.setLimits(xMin=0, yMin=0,
                                      xMax=img_x, yMax=img_y)
         else:
-            self.img_item.setImage(img, autoLevels=img.dtype != np.uint8)
+            self.img_item.setImage(img, autoLevels=True)
 
     def draw_label(self, x: float, y: float, label_name: str, label_type='label', current_label=False):
         if label_name not in self.labels[label_type]:
@@ -99,18 +105,19 @@ class ViewerSubWindow(QMdiSubWindow):
                 if modifiers == Qt.ShiftModifier:
                     action_str = 'select_label'
                 elif modifiers == Qt.AltModifier:
+                    # TODO:
                     action_str = 'auto_label'
+                    logger.log(logging.WARNING, "Not yet implemented")
                 else:
                     action_str = 'create_label'
             # Right click
             elif event.button() == 2:
-                # TODO: should test
                 action_str = 'delete_label'
             else:
                 return
 
             self.mouse_clicked_signal.emit(self.index, mouse_point.x(), mouse_point.y(), action_str)
-        # logger.log(logging.INFO, f"Click at  {mouse_point.x()}, {mouse_point.y()}")
+            logger.log(logging.DEBUG, f"Clicked on sub-window {self.index} at {mouse_point.x()}, {mouse_point.y()}")
 
     def set_current_label(self, label_name: str or None):
         for label_type in ['label', 'guess_label']:
@@ -127,6 +134,31 @@ class ViewerSubWindow(QMdiSubWindow):
 
         self.current_label_name = label_name
 
+    def set_intensity_range(self):
+        img_dtype = self.reader.get_data(0).dtype
+        min_int = np.iinfo(img_dtype).min
+        max_int = np.iinfo(img_dtype).max
+        self.box_vmin.setRange(min_int, max_int)
+        self.box_vmin.setValue(min_int)
+        self.box_vmax.setRange(min_int, max_int)
+        self.box_vmax.setValue(max_int)
+
+    def box_vmin_change(self, value:int):
+        if value < self.box_vmax.value():
+            self.redraw_frame()
+        else:
+            self.box_vmin.setValue(self.box_vmax.value() - 1)
+
+    def box_vmax_change(self, value:int):
+        if value > self.box_vmin.value():
+            self.redraw_frame()
+        else:
+            self.box_vmax.setValue(self.box_vmin.value() + 1)
+
+    def connect_controls(self):
+        self.box_vmin.valueChanged.connect(self.box_vmin_change)
+        self.box_vmax.valueChanged.connect(self.box_vmax_change)
+
     def clear_label(self, label_name: str, label_type='label'):
         # Remove the label from the dictionary and the view if it exists
         label_item = self.labels[label_type].pop(label_name, None)
@@ -135,3 +167,6 @@ class ViewerSubWindow(QMdiSubWindow):
     def clear_all_labels(self):
         self.plot_wget.clearPlots()
         self.labels = {label_key: {} for label_key in self.plot_params}
+
+    def close(self):
+        pass
