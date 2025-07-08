@@ -20,10 +20,6 @@ class ControlsDock(QDockWidget):
         self.layout_grid = QGridLayout(main_widget)
 
         row = 0
-        self.combobox_recordings = QComboBox()
-        self.layout_grid.addWidget(self.combobox_recordings, row, 0, 1, 2)
-
-        row += 1
         self.add_label("dFrame:", row, 0, "d_frame")
         self.add_field(row, 1, "d_frame")
 
@@ -46,7 +42,9 @@ class ControlsDock(QDockWidget):
 
     def add_label(self, label_text: str, row_idx: int, col_idx: int, label_key=None):
         label_widget = QLabel(label_text, self)
-        self.layout_grid.addWidget(label_widget, row_idx, col_idx, 1, 1)
+        self.layout_grid.setColumnStretch(col_idx, 1)
+        self.layout_grid.setRowStretch(row_idx, 1)
+        self.layout_grid.addWidget(label_widget, row_idx, col_idx)
         if label_key is None:
             label_key = label_text
         self.widgets['labels'][label_key] = label_widget
@@ -55,11 +53,15 @@ class ControlsDock(QDockWidget):
         field_widget = QLineEdit()
         if fill_int:
             field_widget.setValidator(QIntValidator())
+        self.layout_grid.setColumnStretch(col_idx, 1)
+        self.layout_grid.setRowStretch(row_idx, 1)
         self.layout_grid.addWidget(field_widget, row_idx, col_idx, 1, 1)
         self.widgets['fields'][field_key] = field_widget
 
-    def add_button(self, button_text: str, row_idx: int, col_idx, button_key=None):
+    def add_button(self, button_text: str, row_idx: int, col_idx: int, button_key=None):
         button_widget = QPushButton(button_text, self)
+        self.layout_grid.setColumnStretch(col_idx, 1)
+        self.layout_grid.setRowStretch(row_idx, 1)
         self.layout_grid.addWidget(button_widget, row_idx, col_idx, 1, 1)
         if button_key is None:
             button_key = button_text

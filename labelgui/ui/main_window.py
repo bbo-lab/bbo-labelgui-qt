@@ -49,8 +49,9 @@ class MainWindow(QMainWindow):
         self.session_menu.addAction("Save Labels As...", self.save_labels_as)
 
         self.view_menu = self.menuBar().addMenu("&View")
-        self.view_menu.addAction("&Tile", self.mdi.tileSubWindows)
-        self.view_menu.addAction("&Cascade", self.mdi.cascadeSubWindows)
+        self.view_menu.addAction("&Tab (single)", lambda: self.mdi_view_select("tab_view"))
+        self.view_menu.addAction("&Tile", lambda: self.mdi_view_select("tile_view"))
+        self.view_menu.addAction("&Cascade", lambda: self.mdi_view_select("cascade_view"))
 
         # Config
         self.load_cfg()
@@ -216,8 +217,16 @@ class MainWindow(QMainWindow):
     def get_sensor_sizes(self):
         return [cam["header"]["sensorsize"] for cam in self.cameras]
 
-    def get_camera_names(self):
-        return [cam["file_name"] for cam in self.cameras]
+    def get_camera_names(self, all_cams=False):
+        cam_names = [cam["file_name"] for cam in self.cameras]
+        if all_cams:
+            return [cam["file_name"] for cam in self.cameras]
+        else:
+            return [self.cameras[i]['file_name'] for i in self.cfg['allowed_cams']]
+
+    def get_camera_name_frm_index(self, cam_idx:int):
+        #
+        return self.get_camera_names(all_cams=True)[cam_idx]
 
     def get_x_res(self):
         return [ss[0] for ss in self.get_sensor_sizes()]
@@ -266,17 +275,19 @@ class MainWindow(QMainWindow):
         return self.frame_idx
 
     def init_viewer(self):
-        cam_names = self.get_camera_names()
+        cam_names = self.get_camera_names(all_cams=True)
 
         # Open windows
         for cam_idx, cam_name in enumerate(cam_names):
-            window = ViewerSubWindow(index=cam_idx,
-                                     reader=self.cameras[cam_idx]['reader'],
-                                     parent=self.mdi)
-            window.setWindowTitle(f'{self.cameras[cam_idx]['file_name']} ({cam_idx})')
-            window.redraw_frame(self.frame_idx)
-            self.subwindows[cam_name] = window
+            if cam_idx in self.cfg['allowed_cams']:
+                window = ViewerSubWindow(index=cam_idx,
+                                         reader=self.cameras[cam_idx]['reader'],
+                                         parent=self.mdi)
+                window.setWindowTitle(f'{self.cameras[cam_idx]['file_name']} ({cam_idx})')
+                window.redraw_frame(self.frame_idx)
+                self.subwindows[cam_name] = window
 
+        self.mdi.tileSubWindows()
         self.viewer_plot_labels(current_label_name="")
         self.viewer_plot_ref_labels()
 
@@ -310,10 +321,11 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock_controls)
 
         self.resizeDocks([self.dock_sketch, self.dock_controls],
-                         [500, 500], Qt.Horizontal)
+                         [1000, 200], Qt.Vertical)
+        self.resizeDocks([self.dock_sketch, self.dock_controls],
+                         [600, 600], Qt.Horizontal)
 
     def trigger_autosave_event(self):
-        # TODO: would it not be better to trigger it based on time/clock?
         if self.cfg['auto_save']:
             self.auto_save_counter = self.auto_save_counter + 1
             if np.mod(self.auto_save_counter, self.cfg['auto_save_N0']) == 0:
@@ -456,7 +468,7 @@ class MainWindow(QMainWindow):
                     label_dict[fr_idx]['point_times'][cam_idx] = time.time()
                     label_dict[fr_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
 
-                    cam_name = self.get_camera_names()[cam_idx]
+                    cam_name = self.get_camera_name_frm_index(cam_idx)
                     self.subwindows[cam_name].clear_label(label_name=label_name,
                                                           label_type='label')
 
@@ -484,23 +496,20 @@ class MainWindow(QMainWindow):
                     label = list(self.dock_sketch.get_sketch_labels().keys()).index(label)
                 else:
                     logger.log(logging.WARNING, f"Label name {label} not in the sketch!")
+                    return
             case _:
                 logger.log(logging.WARNING, f"Input {label} has unknown type")
+                return
 
         self.dock_sketch.list_labels.setCurrentRow(label)
 
     def fill_controls(self):
-        # TODO: vmin, vmax
         # Sketches dock
         self.dock_sketch.fill_controls()
 
         # Controls dock
         self.dock_controls.widgets['fields']['current_frame'].setText(str(self.get_frame_idx()))
         self.dock_controls.widgets['fields']['d_frame'].setText(str(self.d_frame))
-        if self.recordings_loaded:
-            recording_items = ['All cameras']
-            self.dock_controls.combobox_recordings.addItems(recording_items + [f'Camera {i:03d}'
-                                                                               for i, _ in enumerate(self.cameras)])
 
     def connect_controls(self):
         list_labels = self.dock_sketch.list_labels
@@ -513,7 +522,6 @@ class MainWindow(QMainWindow):
         list_labels.setCurrentRow(0)
 
         # Control dock
-        self.dock_controls.combobox_recordings.currentIndexChanged.connect(self.camera_select)
         self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
             lambda: self.save_labels(None))
         self.dock_controls.widgets['buttons']['home'].clicked.connect(
@@ -530,6 +538,7 @@ class MainWindow(QMainWindow):
 
         # Viewer
         for _, subwin in self.subwindows.items():
+            subwin.connect_controls()
             subwin.mouse_clicked_signal.connect(self.viewer_click)
 
     def add_label(self, coords, label_name, fr_idx, cam_idx):
@@ -569,18 +578,18 @@ class MainWindow(QMainWindow):
         for _, subwin in self.subwindows.items():
             subwin.plot_wget.autoRange()
 
-    def camera_select(self):
-        cam_idx = self.dock_controls.combobox_recordings.currentIndex()
-        match cam_idx:
-            case 0:
-                for _, win in self.subwindows.items():
-                    win.show()
+    def mdi_view_select(self, view_mode : str):
+        match view_mode:
+            case "tab_view":
+                self.mdi.setViewMode(QMdiArea.TabbedView)
+            case "tile_view":
+                self.mdi.setViewMode(QMdiArea.SubWindowView)
                 self.mdi.tileSubWindows()
-                self.view_menu.setDisabled(False)
+            case "cascade_view":
+                self.mdi.setViewMode(QMdiArea.SubWindowView)
+                self.mdi.cascadeSubWindows()
             case _:
-                cam_name = self.get_camera_names()[cam_idx - 1]
-                self.subwindows[cam_name].showMaximized()
-                self.view_menu.setDisabled(True)
+                logger.log(logging.WARNING, f"Unknown MDI view mode selected")
 
     def sketch_select(self):
         self.trigger_autosave_event()
