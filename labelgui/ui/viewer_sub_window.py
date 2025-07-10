@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class ViewerSubWindow(QMdiSubWindow):
-    mouse_clicked_signal = pyqtSignal(int, float, float, str)
+    mouse_clicked_signal = pyqtSignal(float, float, int, int, str)
     # Necessary to follow camelCase for keys here, for compatibility with pyqtgraph
     plot_params = {
         'label': {'symbol': 'o', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
@@ -30,7 +30,7 @@ class ViewerSubWindow(QMdiSubWindow):
         self.index = index
         self.reader = reader
         self.img_item = img_item
-        self.frame_index = 0
+        self.frame_idx = None
         self.labels = {label_key: {} for label_key in self.plot_params}
         self.current_label_name = None
 
@@ -46,30 +46,35 @@ class ViewerSubWindow(QMdiSubWindow):
         # Contrast options
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout(bottom_widget)
-        bottom_layout.addWidget(QLabel("Intensity:"))
+        bottom_layout.addWidget(QLabel("Intensity:"), alignment=Qt.AlignLeft)
 
         self.label_vmin = QLabel("vmin")
         self.box_vmin = QSpinBox()
         self.box_vmin.setKeyboardTracking(False)
-        bottom_layout.addWidget(self.label_vmin)
-        bottom_layout.addWidget(self.box_vmin)
+        bottom_layout.addWidget(self.label_vmin, alignment=Qt.AlignLeft)
+        bottom_layout.addWidget(self.box_vmin, alignment=Qt.AlignLeft)
 
         self.label_vmax = QLabel("vmax")
         self.box_vmax = QSpinBox()
         self.box_vmax.setKeyboardTracking(False)
-        bottom_layout.addWidget(self.label_vmax)
-        bottom_layout.addWidget(self.box_vmax)
+        bottom_layout.addWidget(self.label_vmax, alignment=Qt.AlignLeft)
+        bottom_layout.addWidget(self.box_vmax, alignment=Qt.AlignLeft)
+        bottom_layout.addStretch()
+
+        self.label_labeler = QLabel("")
+        bottom_layout.addWidget(self.label_labeler, alignment=Qt.AlignRight)
 
         self.set_intensity_range()
         main_layout.addWidget(bottom_widget)
         self.setWidget(main_widget)
 
-    def redraw_frame(self, frame_idx=None):
-        if frame_idx is None and self.frame_index is not None:
-            frame_idx = self.frame_index
+    def redraw_frame(self):
+        if self.frame_idx is None:
+            if self.img_item is not None:
+                self.img_item.clear()
+            return
 
-        self.frame_index = frame_idx
-        img = self.reader.get_data(frame_idx)
+        img = self.reader.get_data(self.frame_idx)
         img = np.clip(img, self.box_vmin.value(), self.box_vmax.value())
 
         if self.img_item is None:
@@ -116,7 +121,8 @@ class ViewerSubWindow(QMdiSubWindow):
             else:
                 return
 
-            self.mouse_clicked_signal.emit(self.index, mouse_point.x(), mouse_point.y(), action_str)
+            self.mouse_clicked_signal.emit(mouse_point.x(), mouse_point.y(),
+                                           self.frame_idx, self.index, action_str)
             logger.log(logging.DEBUG, f"Clicked on sub-window {self.index} at {mouse_point.x()}, {mouse_point.y()}")
 
     def set_current_label(self, label_name: str or None):

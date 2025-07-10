@@ -3,9 +3,11 @@ import os
 import sys
 import time
 from pathlib import Path
+from re import search
 from typing import List, Dict, Optional
 
 import numpy as np
+import pandas as pd
 import paho.mqtt.client as mqtt
 import svidreader
 from PyQt5.QtCore import Qt
@@ -31,6 +33,7 @@ class MainWindow(QMainWindow):
         self.cfg = {}
         self.file_config = None
         self.mqtt_client = None
+        self.sync = sync
 
         self.cameras: List[Dict] = []
         self.subwindows: Dict = {}
@@ -49,7 +52,7 @@ class MainWindow(QMainWindow):
         self.session_menu.addAction("Save Labels As...", self.save_labels_as)
 
         self.view_menu = self.menuBar().addMenu("&View")
-        self.view_menu.addAction("&Tab (single)", lambda: self.mdi_view_select("tab_view"))
+        self.view_menu.addAction("&Tab (single cam view)", lambda: self.mdi_view_select("tab_view"))
         self.view_menu.addAction("&Tile", lambda: self.mdi_view_select("tile_view"))
         self.view_menu.addAction("&Cascade", lambda: self.mdi_view_select("cascade_view"))
 
@@ -57,11 +60,14 @@ class MainWindow(QMainWindow):
         self.load_cfg()
 
         # Load some params from config
-        self.d_frame = self.cfg['d_frame']
-        self.min_frame = int(self.cfg['min_frame'])
-        self.max_frame = int(self.cfg['max_frame'])
-        self.allowed_frames = np.arange(self.min_frame, self.max_frame, self.d_frame, dtype=int)
-        self.frame_idx = self.min_frame
+        self.d_time = self.cfg['d_time']
+        self.min_time = int(self.cfg['min_time'])
+        self.max_time = int(self.cfg['max_time'])
+        # self.allowed_frames = np.arange(self.min_frame, self.max_frame, self.d_frame, dtype=int)
+        # self.frame_idx = self.min_frame
+        self.current_time = 0.0
+        self.times = []
+        self.cam_times = []
         self.dock_sketch.sketch_zoom_scale = self.cfg.get('sketch_zoom_scale', 0.1)
 
         # Files
@@ -96,11 +102,26 @@ class MainWindow(QMainWindow):
         self.setWindowTitle('Labeling GUI')
 
         self.gui_loaded = True
-        self.sync = sync
         self.mqtt_connect()
 
         # TODO: ignoring calibration for now, will implement later if necessary
-        # TODO: Once we start labeling, it will be glity to add a new video. Is that okay?
+        # TODO: Once we start labeling, it will be glitchy to add a new video. Is that okay?
+
+    # Init functions
+    def init_files_folders(self):
+        recording_folder = Path(self.cfg['recording_folder'])
+        rec_files = (
+            [bbo_pm.decode_path(recording_folder / i).expanduser().resolve() for i in
+             self.cfg['recording_filenames']]
+        )
+        self.load_recordings(rec_files)
+        self.load_times()
+
+        # create folder structure / save backup / load last frame
+        self.init_assistant_folders(recording_folder)
+        self.init_autosave()
+        archive_cfg(self.file_config, self.labels_folder)
+        self.restore_last_frame_time()
 
     def load_cfg(self):
         if os.path.isdir(self.drive):
@@ -120,50 +141,6 @@ class MainWindow(QMainWindow):
         logger.log(logging.INFO, f"file_config: {file_config}")
         logger.log(logging.INFO, "++++++++++++++++++++++++++++++++++++")
         self.file_config = file_config
-
-    # Mqtt functions
-    def mqtt_connect(self):
-        if isinstance(self.sync, bool):
-            return
-        try:
-            self.mqtt_client = mqtt.Client()
-            self.mqtt_client.on_message = self.mqtt_on_message
-            self.mqtt_client.connect("127.0.0.1", 1883, 60)
-            self.mqtt_client.subscribe(self.sync)
-            self.mqtt_client.loop_start()
-        except ConnectionRefusedError:
-            logger.log(logging.ERROR, "No connection to MQTT server.")
-            self.mqtt_client = None
-
-    def mqtt_publish(self):
-        if self.mqtt_client is not None:
-            try:
-                self.mqtt_client.publish(self.sync, payload=str(self.frame_idx))
-            except ConnectionRefusedError:
-                logger.log(logging.ERROR, "No connection to MQTT server.")
-                self.mqtt_client = None
-
-    def mqtt_on_message(self, client, userdata, message):
-        logger.log(logging.INFO, f"Received message '{message.payload.decode()}' on topic '{message.topic}'")
-        match message.topic:
-            case "bbo/sync/fr_idx":
-                fr_idx = int(message.payload.decode())
-                self.set_frame_idx(fr_idx, mqtt_publish=False)
-
-    # Init functions
-    def init_files_folders(self):
-        recording_folder = Path(self.cfg['recording_folder'])
-        rec_files = (
-            [bbo_pm.decode_path(recording_folder / i).expanduser().resolve() for i in
-             self.cfg['recording_filenames']]
-        )
-        self.load_recordings(rec_files)
-
-        # create folder structure / save backup / load last frame
-        self.init_assistant_folders(recording_folder)
-        self.init_autosave()
-        archive_cfg(self.file_config, self.labels_folder)
-        self.restore_last_frame_idx()
 
     def load_labels(self, labels_file: Optional[Path] = None):
         if labels_file is None:
@@ -211,35 +188,34 @@ class MainWindow(QMainWindow):
         self.recordings_loaded = True
         self.cameras = cameras
 
-    def get_n_frames(self):
-        return [cam["header"]["nFrames"] for cam in self.cameras]
+    def load_times(self):
+        if self.recordings_loaded:
+            num_frames = self.get_n_frames()
 
-    def get_sensor_sizes(self):
-        return [cam["header"]["sensorsize"] for cam in self.cameras]
+            for cam_idx, cam in enumerate(self.cameras):
+                video_times_dict = self.cfg["video_times"].get(cam_idx, {})
+                if 'file' in video_times_dict:
+                    cam_times = pd.read_csv(video_times_dict['file'])
+                    assert len(cam_times) == num_frames[cam_idx], (f"video times in the csv file "
+                                                                   f"do not match the number of frames in the recording {cam_idx}")
+                else:
+                    cam_times = np.arange(num_frames[cam_idx]) / video_times_dict.get('fps',
+                                                                                      cam['header']['fps'])
+                cam_times += video_times_dict.get('offset', 0)
+                self.cam_times.append(list(cam_times))
 
-    def get_camera_names(self, all_cams=False):
-        cam_names = [cam["file_name"] for cam in self.cameras]
-        if all_cams:
-            return [cam["file_name"] for cam in self.cameras]
-        else:
-            return [self.cameras[i]['file_name'] for i in self.cfg['allowed_cams']]
+            # Concatenate and remove duplicates
+            times = set(sum(self.cam_times, []))
+            times = np.asarray(list(times))
+            times = times[(times >= self.min_time) & (times < self.max_time)]
+            self.times = times.tolist()
 
-    def get_camera_name_frm_index(self, cam_idx:int):
-        #
-        return self.get_camera_names(all_cams=True)[cam_idx]
-
-    def get_x_res(self):
-        return [ss[0] for ss in self.get_sensor_sizes()]
-
-    def get_y_res(self):
-        return [ss[1] for ss in self.get_sensor_sizes()]
-
-    def restore_last_frame_idx(self):
+    def restore_last_frame_time(self):
         # Retrieve last frame from 'exit' file
         file_exit_status = self.labels_folder / 'exit_status.npy'
         if file_exit_status.is_file():
             exit_status = np.load(file_exit_status.as_posix(), allow_pickle=True)[()]
-            self.set_frame_idx(exit_status['i_frame'])
+            self.set_time(exit_status['i_time'])
 
     def init_assistant_folders(self, recording_folder: Path):
         # folder structure
@@ -271,74 +247,60 @@ class MainWindow(QMainWindow):
             os.makedirs(autosave_folder)
         archive_cfg(self.file_config, autosave_folder)
 
-    def get_frame_idx(self):
-        return self.frame_idx
-
+    # Init gui functions
     def init_viewer(self):
-        cam_names = self.get_camera_names(all_cams=True)
 
         # Open windows
-        for cam_idx, cam_name in enumerate(cam_names):
+        for cam_idx, cam in enumerate(self.cameras):
             if cam_idx in self.cfg['allowed_cams']:
                 window = ViewerSubWindow(index=cam_idx,
-                                         reader=self.cameras[cam_idx]['reader'],
+                                         reader=cam['reader'],
                                          parent=self.mdi)
-                window.setWindowTitle(f'{self.cameras[cam_idx]['file_name']} ({cam_idx})')
-                window.redraw_frame(self.frame_idx)
-                self.subwindows[cam_name] = window
+                window.setWindowTitle(f'{cam['file_name']} ({cam_idx})')
+                window.redraw_frame()
+                self.subwindows[cam_idx] = window
 
         self.mdi.tileSubWindows()
-        self.viewer_plot_labels(current_label_name="")
-        self.viewer_plot_ref_labels()
+        self.set_time(self.current_time)
 
-    def get_valid_frame_idx(self, frame_idx: int):
-        return self.allowed_frames[np.argmin(np.abs(self.allowed_frames - frame_idx))]
+    def fill_controls(self):
+        # Sketches dock
+        self.dock_sketch.fill_controls()
 
-    def set_frame_idx(self, frame_idx: int or str, mqtt_publish=True):
-        if isinstance(frame_idx, str):
-            frame_idx = int(frame_idx)
-        self.frame_idx = self.get_valid_frame_idx(frame_idx)
+        # Controls dock
+        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time,6)))
+        self.dock_controls.widgets['fields']['d_time'].setText(str(self.d_time))
 
-        if self.gui_loaded:
-            # Controls dock
-            self.dock_controls.widgets['labels']['labeler'].setText(
-                ", ".join(label_lib.get_frame_labelers(self.labels, self.frame_idx))
-            )
-            # Viewer
-            self.viewer_change_frame()
+    def connect_controls(self):
+        list_labels = self.dock_sketch.list_labels
 
-        if mqtt_publish:
-            self.mqtt_publish()
+        # Sketches dock
+        self.dock_sketch.connect_canvas()
+        self.dock_sketch.connect_label_buttons()
+        self.dock_sketch.combobox_sketches.currentIndexChanged.connect(self.sketch_select)
+        list_labels.currentItemChanged.connect(self.label_select)
+        list_labels.setCurrentRow(0)
 
-    def set_d_frame(self, df: int):
-        pass
-        # self.d_frame = df
-        # self.allowed_frames = np.arange(self.min_frame, self.max_frame, self.d_frame, dtype=int)
+        # Control dock
+        self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
+            lambda: self.save_labels(None))
+        self.dock_controls.widgets['buttons']['home'].clicked.connect(
+            self.viewer_zoom_reset)
 
-    def set_docks_layout(self):
-        # Right dock area
-        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_sketch)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_controls)
+        self.dock_controls.widgets['buttons']['previous_time'].clicked.connect(self.goto_previous_time)
+        self.dock_controls.widgets['buttons']['next_time'].clicked.connect(self.goto_next_time)
+        self.dock_controls.widgets['fields']['current_time'].returnPressed.connect(self.field_current_time_changed)
+        # TODO: figure out the function of d_time/d_frame when editable
+        self.dock_controls.widgets['fields']['d_time'].setReadOnly(True)
+        # self.dock_controls.widgets['fields']['d_frame'].returnPressed.connect(
+        #    lambda: self.set_d_frame(int(self.dock_controls.widgets['fields']['d_frame'].text())))
 
-        self.resizeDocks([self.dock_sketch, self.dock_controls],
-                         [1000, 200], Qt.Vertical)
-        self.resizeDocks([self.dock_sketch, self.dock_controls],
-                         [600, 600], Qt.Horizontal)
+        # Viewer
+        for _, subwin in self.subwindows.items():
+            subwin.connect_controls()
+            subwin.mouse_clicked_signal.connect(self.viewer_click)
 
-    def trigger_autosave_event(self):
-        if self.cfg['auto_save']:
-            self.auto_save_counter = self.auto_save_counter + 1
-            if np.mod(self.auto_save_counter, self.cfg['auto_save_N0']) == 0:
-                file = self.labels_folder / 'labels.yml'  # this is equal to self.labels_file
-                label_lib.save(file, self.labels)
-                logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
-            if np.mod(self.auto_save_counter, self.cfg['auto_save_N1']) == 0:
-                file = self.labels_folder / 'autosave' / 'labels.yml'
-                label_lib.save(file, self.labels)
-                logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
-
-                self.auto_save_counter = 0
-
+    # Viewer functions
     def viewer_change_frame(self):
         self.viewer_clear_labels()
 
@@ -347,19 +309,25 @@ class MainWindow(QMainWindow):
         self.viewer_plot_ref_labels()
 
     def viewer_update_images(self):
-        for cam_idx, cam_name in enumerate(self.get_camera_names()):
-            self.subwindows[cam_name].redraw_frame(self.frame_idx)
+        for _, subwin in self.subwindows.items():
+            subwin.redraw_frame()
 
     def viewer_plot_labels(self, label_names=None, current_label_name=None):
-        frame_idx = self.get_frame_idx()
         if label_names is None:
             label_names = label_lib.get_labels(self.labels)
         if current_label_name is None:
             current_label_name = self.get_current_label()
 
-        for cam_idx, cam_name in enumerate(self.get_camera_names()):
-            subwin = self.subwindows[cam_name]
+        for cam_idx, subwin in self.subwindows.items():
+            frame_idx = subwin.frame_idx
+            if frame_idx is None:
+                subwin.clear_all_labels()
+                subwin.label_labeler.setText("")
+                continue
 
+            subwin.label_labeler.setText(
+                ", ".join(label_lib.get_frame_labelers(self.labels, subwin.frame_idx))
+            )
             # Plot each label
             for label_name in label_names:
                 label_dict = self.labels['labels'].get(label_name, {})
@@ -404,10 +372,11 @@ class MainWindow(QMainWindow):
 
     def viewer_plot_ref_labels(self):
         # Plot reference labels
-        frame_idx = self.get_frame_idx()
 
-        for cam_idx, cam_name in enumerate(self.get_camera_names()):
-            subwin = self.subwindows[cam_name]
+        for cam_idx, subwin in self.subwindows.items():
+            frame_idx = subwin.frame_idx
+            if frame_idx is None:
+                continue
 
             for label_name in self.labels['labels']:
                 if label_name in self.ref_labels['labels'] and frame_idx in self.ref_labels['labels'][label_name] and \
@@ -426,16 +395,15 @@ class MainWindow(QMainWindow):
                         # TODO: test this
                         subwin.draw_label(*line_coords.T, label_name, label_type='error_line')
 
-    def viewer_click(self, cam_idx: int, x: float, y: float, action: str = 'create_label'):
+    def viewer_click(self, x: float, y: float, cam_frame_idx: int, cam_idx: int, action: str = 'create_label'):
         # Initialize array
-        fr_idx = self.get_frame_idx()
         label_name = self.get_current_label()
 
         match action:
             case 'select_label':
                 coords = np.array([x, y], dtype=np.float64)
                 point_dists = []
-                frame_labels = label_lib.get_labels_from_frame(self.labels, frame_idx=fr_idx)
+                frame_labels = label_lib.get_labels_from_frame(self.labels, frame_idx=cam_frame_idx)
                 label_names = list(frame_labels.keys())
                 for ln, ld in frame_labels.items():
                     if len(ld) > cam_idx and not np.any(np.isnan(ld[cam_idx])):
@@ -447,7 +415,7 @@ class MainWindow(QMainWindow):
                 self.set_current_label(label_names[np.argmin(point_dists)])
 
             case 'create_label':
-                self.add_label([x, y], label_name, fr_idx, cam_idx)
+                self.add_label([x, y], label_name, cam_frame_idx, cam_idx)
                 self.viewer_plot_labels(label_names=[label_name])
 
             case 'auto_label':
@@ -459,17 +427,16 @@ class MainWindow(QMainWindow):
                     self.labels['labeler_list'].append(self.user)
 
                 label_dict = self.labels['labels'].get(label_name, {})
-                if (fr_idx in label_dict and
-                        not np.any(np.isnan(label_dict[fr_idx]['coords'][cam_idx, :]))):
+                if (cam_frame_idx in label_dict and
+                        not np.any(np.isnan(label_dict[cam_frame_idx]['coords'][cam_idx, :]))):
                     # Only delete the label if it already exists
 
-                    label_dict[fr_idx]['coords'][cam_idx, :] = np.nan
+                    label_dict[cam_frame_idx]['coords'][cam_idx, :] = np.nan
                     # For synchronization, deletion time and user must be recorded
-                    label_dict[fr_idx]['point_times'][cam_idx] = time.time()
-                    label_dict[fr_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
+                    label_dict[cam_frame_idx]['point_times'][cam_idx] = time.time()
+                    label_dict[cam_frame_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
 
-                    cam_name = self.get_camera_name_frm_index(cam_idx)
-                    self.subwindows[cam_name].clear_label(label_name=label_name,
+                    self.subwindows[cam_idx].clear_label(label_name=label_name,
                                                           label_type='label')
 
             case _:
@@ -477,8 +444,99 @@ class MainWindow(QMainWindow):
                                             f'and location {x}, {y}')
 
     def viewer_clear_labels(self):
-        for cam_idx, cam_name in enumerate(self.get_camera_names()):
-            self.subwindows[cam_name].clear_all_labels()
+        for cam_idx, subwin in self.subwindows.items():
+            subwin.clear_all_labels()
+
+    def viewer_zoom_reset(self):
+        # Reset view in all the subwindows
+        for _, subwin in self.subwindows.items():
+            subwin.plot_wget.autoRange()
+
+    # Mqtt functions
+    def mqtt_connect(self):
+        if isinstance(self.sync, bool):
+            return
+        try:
+            self.mqtt_client = mqtt.Client()
+            self.mqtt_client.on_message = self.mqtt_on_message
+            self.mqtt_client.connect("127.0.0.1", 1883, 60)
+            self.mqtt_client.subscribe(self.sync)
+            self.mqtt_client.loop_start()
+        except ConnectionRefusedError:
+            logger.log(logging.ERROR, "No connection to MQTT server.")
+            self.mqtt_client = None
+
+    def mqtt_publish(self):
+        if self.mqtt_client is not None:
+            try:
+                self.mqtt_client.publish(self.sync, payload=str(self.frame_idx))
+            except ConnectionRefusedError:
+                logger.log(logging.ERROR, "No connection to MQTT server.")
+                self.mqtt_client = None
+
+    def mqtt_on_message(self, client, userdata, message):
+        logger.log(logging.INFO, f"Received message '{message.payload.decode()}' on topic '{message.topic}'")
+        match message.topic:
+            case "bbo/sync/fr_idx":
+                fr_idx = int(message.payload.decode())
+                # TODO:
+                # self.set_frame_idx(fr_idx, mqtt_publish=False)
+
+    # Getter functions
+    def get_current_time(self):
+        return self.current_time
+
+    def get_n_frames(self):
+        return [cam["header"]["num_frames"] for cam in self.cameras]
+
+    def get_fps(self):
+        return [cam["header"]["fps"] for cam in self.cameras]
+
+    def get_sensor_sizes(self):
+        return [cam["header"]["sensorsize"] for cam in self.cameras]
+
+    def get_camera_names(self, all_cams=False):
+        if all_cams:
+            return [cam["file_name"] for cam in self.cameras]
+        else:
+            return [self.cameras[i]['file_name'] for i in self.cfg['allowed_cams']]
+
+    def get_camera_name_frm_index(self, cam_idx:int):
+        #
+        return self.get_camera_names(all_cams=True)[cam_idx]
+
+    def get_x_res(self):
+        return [ss[0] for ss in self.get_sensor_sizes()]
+
+    def get_y_res(self):
+        return [ss[1] for ss in self.get_sensor_sizes()]
+
+    @DeprecationWarning
+    def get_valid_frame_idx(self, frame_idx: int):
+        return self.allowed_frames[np.argmin(np.abs(self.allowed_frames - frame_idx))]
+
+    def get_valid_time(self, input_time: float):
+        """
+            Returns a valid time that is closest to the given 'time'
+        """
+        times_arr = np.asarray(self.times)
+        current_time_idx = self.times.index(self.current_time)
+        # Asserting that the change in time should be more than self.d_time
+        diff_time = np.abs(self.current_time - input_time)
+        diff_sign = int(np.sign(input_time - self.current_time))
+        if diff_time < self.d_time:
+            input_time = self.current_time + (diff_sign * self.d_time)
+
+        if diff_sign > 0:
+            search_slice = times_arr[current_time_idx:]
+        else:
+            search_slice = times_arr[:current_time_idx + 1][::-1]
+
+        if len(search_slice) == 0:
+            return self.current_time
+        else:
+            diff_idx = np.argmin(np.abs(search_slice - input_time))
+            return self.times[current_time_idx + (diff_sign * diff_idx)]
 
     def get_current_label(self):
         selected_label = self.dock_sketch.list_labels.currentItem()
@@ -486,6 +544,62 @@ class MainWindow(QMainWindow):
             return selected_label.text()
         else:
             return None
+
+    # Setter functions
+    def set_time(self, input_time: float, mqtt_publish=True):
+        self.current_time = input_time
+
+        for cam_idx, subwin in self.subwindows.items():
+            if input_time in self.cam_times[cam_idx]:
+                subwin.frame_idx = self.cam_times[cam_idx].index(input_time)
+            else:
+                subwin.frame_idx = None
+                subwin.label_labeler.setText("")
+
+            if mqtt_publish:
+                self.mqtt_publish()
+
+        # Viewer
+        self.viewer_change_frame()
+
+    @DeprecationWarning
+    def set_frame_idx(self, frame_idx: int or str, mqtt_publish=True):
+        if isinstance(frame_idx, str):
+            frame_idx = int(frame_idx)
+        self.frame_idx = self.get_valid_frame_idx(frame_idx)
+
+        if self.gui_loaded:
+            # Controls dock
+            self.dock_controls.widgets['labels']['labeler'].setText(
+                ", ".join(label_lib.get_frame_labelers(self.labels, self.frame_idx))
+            )
+            # Viewer
+            self.viewer_change_frame()
+
+        if mqtt_publish:
+            self.mqtt_publish()
+
+    def set_docks_layout(self):
+        # Right dock area
+        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_sketch)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_controls)
+
+        self.resizeDocks([self.dock_sketch, self.dock_controls],
+                         [600, 600], Qt.Horizontal)
+
+    def trigger_autosave_event(self):
+        if self.cfg['auto_save']:
+            self.auto_save_counter = self.auto_save_counter + 1
+            if np.mod(self.auto_save_counter, self.cfg['auto_save_N0']) == 0:
+                file = self.labels_folder / 'labels.yml'  # this is equal to self.labels_file
+                label_lib.save(file, self.labels)
+                logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
+            if np.mod(self.auto_save_counter, self.cfg['auto_save_N1']) == 0:
+                file = self.labels_folder / 'autosave' / 'labels.yml'
+                label_lib.save(file, self.labels)
+                logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
+
+                self.auto_save_counter = 0
 
     def set_current_label(self, label: str or int):
         match label:
@@ -503,44 +617,7 @@ class MainWindow(QMainWindow):
 
         self.dock_sketch.list_labels.setCurrentRow(label)
 
-    def fill_controls(self):
-        # Sketches dock
-        self.dock_sketch.fill_controls()
-
-        # Controls dock
-        self.dock_controls.widgets['fields']['current_frame'].setText(str(self.get_frame_idx()))
-        self.dock_controls.widgets['fields']['d_frame'].setText(str(self.d_frame))
-
-    def connect_controls(self):
-        list_labels = self.dock_sketch.list_labels
-
-        # Sketches dock
-        self.dock_sketch.connect_canvas()
-        self.dock_sketch.connect_label_buttons()
-        self.dock_sketch.combobox_sketches.currentIndexChanged.connect(self.sketch_select)
-        list_labels.currentItemChanged.connect(self.label_select)
-        list_labels.setCurrentRow(0)
-
-        # Control dock
-        self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
-            lambda: self.save_labels(None))
-        self.dock_controls.widgets['buttons']['home'].clicked.connect(
-            self.viewer_zoom_reset)
-
-        self.dock_controls.widgets['buttons']['previous_frame'].clicked.connect(self.previous_frame)
-        self.dock_controls.widgets['buttons']['next_frame'].clicked.connect(self.next_frame)
-        self.dock_controls.widgets['fields']['current_frame'].returnPressed.connect(
-            lambda: self.set_frame_idx(self.dock_controls.widgets['fields']['current_frame'].text()))
-        # TODO: figure out the function of d_frame when editable
-        self.dock_controls.widgets['fields']['d_frame'].setReadOnly(True)
-        # self.dock_controls.widgets['fields']['d_frame'].returnPressed.connect(
-        #    lambda: self.set_d_frame(int(self.dock_controls.widgets['fields']['d_frame'].text())))
-
-        # Viewer
-        for _, subwin in self.subwindows.items():
-            subwin.connect_controls()
-            subwin.mouse_clicked_signal.connect(self.viewer_click)
-
+    # Others
     def add_label(self, coords, label_name, fr_idx, cam_idx):
         data_shape = (len(self.cameras), 2)
 
@@ -572,11 +649,6 @@ class MainWindow(QMainWindow):
         if file:
             logger.log(logging.INFO, f"Saving Labels As {file}")
             self.save_labels(Path(file))
-
-    def viewer_zoom_reset(self):
-        # Reset view in all the subwindows
-        for _, subwin in self.subwindows.items():
-            subwin.plot_wget.autoRange()
 
     def mdi_view_select(self, view_mode : str):
         match view_mode:
@@ -612,17 +684,31 @@ class MainWindow(QMainWindow):
         for _, subwin in self.subwindows.items():
             subwin.set_current_label(label_name=self.get_current_label())
 
-    def next_frame(self):
-        self.set_frame_idx(
-            self.get_valid_frame_idx(self.frame_idx + self.d_frame)
-        )
-        self.dock_controls.widgets['fields']['current_frame'].setText(str(self.get_frame_idx()))
+    def goto_next_time(self):
+        self.set_time(self.get_valid_time(self.current_time + self.d_time))
+        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time,6)))
 
-    def previous_frame(self):
-        self.set_frame_idx(
-            self.get_valid_frame_idx(self.frame_idx - self.d_frame)
-        )
-        self.dock_controls.widgets['fields']['current_frame'].setText(str(self.get_frame_idx()))
+        """t = self.current_time + self.d_time
+        current_time_idx = self.times.index(self.current_time)
+        diff_idx = np.argmin(np.abs(np.asarray(self.times[current_time_idx:]) - t))
+        if diff_idx == 0:
+            diff_idx = 1
+        self.set_time(self.times[current_time_idx + diff_idx])"""
+
+    def goto_previous_time(self):
+        self.set_time(self.get_valid_time(self.current_time - self.d_time))
+        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time,6)))
+        """t = self.current_time - self.d_time
+        current_time_idx = self.times.index(self.current_time)
+        diff_idx = np.argmin(np.abs(np.asarray(self.times[:current_time_idx]) - t))
+        if diff_idx == 0:
+            diff_idx = 1
+        self.set_time(self.times[current_time_idx - diff_idx])"""
+
+    def field_current_time_changed(self):
+        new_time = float(self.dock_controls.widgets['fields']['current_time'].text())
+        self.set_time(self.get_valid_time(new_time))
+        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
 
     # Shortcuts
     def keyPressEvent(self, event):
@@ -630,9 +716,9 @@ class MainWindow(QMainWindow):
             if self.cfg['button_save_labels'] and event.key() == Qt.Key_S:
                 self.save_labels()
             if self.cfg['button_next'] and event.key() == Qt.Key_D:
-                self.next_frame()
+                self.goto_next_time()
             elif self.cfg['button_previous'] and event.key() == Qt.Key_A:
-                self.previous_frame()
+                self.goto_previous_time()
             elif self.cfg['button_next_label'] and event.key() == Qt.Key_N:
                 self.dock_sketch.widgets['buttons']['next_label'].click()
             elif self.cfg['button_previous_label'] and event.key() == Qt.Key_P:
@@ -643,7 +729,7 @@ class MainWindow(QMainWindow):
             logger.log(logging.WARNING, "Auto-repeat is not supported")
 
     def closeEvent(self, event):
-        exit_status = {'i_frame': self.get_frame_idx()}
+        exit_status = {'i_time': self.current_time}
         np.save(self.labels_folder / 'exit_status.npy', exit_status)
 
 

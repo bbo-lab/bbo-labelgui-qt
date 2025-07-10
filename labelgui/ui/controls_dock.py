@@ -20,23 +20,20 @@ class ControlsDock(QDockWidget):
         self.layout_grid = QGridLayout(main_widget)
 
         row = 0
-        self.add_label("dFrame:", row, 0, "d_frame")
-        self.add_field(row, 1, "d_frame")
+        self.add_label("dTime:", row, 0, "d_time")
+        self.add_field(row, 1, "d_time")
 
         row += 1
-        self.add_label("current frame:", row, 0, "current_frame")
-        self.add_field(row, 1, "current_frame")
+        self.add_label("current time:", row, 0, "current_time")
+        self.add_field(row, 1, "current_time")
 
         row += 1
-        self.add_button("Previous Frame (A)", row, 0, "previous_frame")
-        self.add_button("Save Labels (S)", row, 1, "save_labels")
+        self.add_button("Previous Timepoint (A)", row, 0, "previous_time")
+        self.add_button("Next Timepoint (D)", row, 1, "next_time")
 
         row += 1
-        self.add_button("Next Frame (D)", row, 0, "next_frame")
+        self.add_button("Save Labels (S)", row, 0, "save_labels")
         self.add_button("Home (H)", row, 1, "home")
-
-        row += 1
-        self.add_label("", row, 0, "labeler")
 
         self.setWidget(main_widget)
 
@@ -49,7 +46,7 @@ class ControlsDock(QDockWidget):
             label_key = label_text
         self.widgets['labels'][label_key] = label_widget
 
-    def add_field(self, row_idx: int, col_idx: int, field_key: str, fill_int=True):
+    def add_field(self, row_idx: int, col_idx: int, field_key: str, fill_int=False):
         field_widget = QLineEdit()
         if fill_int:
             field_widget.setValidator(QIntValidator())
