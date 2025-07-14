@@ -1,6 +1,6 @@
 from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
-                             QPushButton, QComboBox, QDockWidget)
+                             QPushButton, QDockWidget)
 
 
 class ControlsDock(QDockWidget):

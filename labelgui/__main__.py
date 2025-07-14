@@ -5,7 +5,7 @@ from bbo import label_lib
 import logging
 from PyQt5.QtWidgets import QApplication
 
-from labelgui import ui
+from . import ui
 
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--labels', type=str, required=False, nargs='*', default=None,
                         help="If given, merges labes.npz in given dirs into labels.npz file specified in INPUT_PATH "
                              "config file")
+    # TODO: check with kay if these are necessary
     parser.add_argument('--merge', type=str, required=False, nargs='*', default=None,
                         help="If given, merges given labes.npz into labels.npz file specified in INPUT_PATH")
     parser.add_argument('--add', type=str, required=False, nargs='*', default=None,

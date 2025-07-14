@@ -1,5 +1,4 @@
 import logging
-import threading
 
 import numpy as np
 import pyqtgraph as pg
@@ -98,6 +97,9 @@ class ViewerSubWindow(QMdiSubWindow):
             self.set_current_label(label_name)
 
     def mouse_clicked(self, event):
+        if self.frame_idx is None:
+            return
+
         vb = self.plot_wget.plotItem.vb
         scene_coords = event.scenePos()
         modifiers = QApplication.keyboardModifiers()
@@ -149,13 +151,13 @@ class ViewerSubWindow(QMdiSubWindow):
         self.box_vmax.setRange(min_int, max_int)
         self.box_vmax.setValue(max_int)
 
-    def box_vmin_change(self, value:int):
+    def box_vmin_change(self, value: int):
         if value < self.box_vmax.value():
             self.redraw_frame()
         else:
             self.box_vmin.setValue(self.box_vmax.value() - 1)
 
-    def box_vmax_change(self, value:int):
+    def box_vmax_change(self, value: int):
         if value > self.box_vmin.value():
             self.redraw_frame()
         else:

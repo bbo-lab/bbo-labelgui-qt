@@ -3,12 +3,11 @@ import os
 import sys
 import time
 from pathlib import Path
-from re import search
 from typing import List, Dict, Optional
 
 import numpy as np
-import pandas as pd
 import paho.mqtt.client as mqtt
+import pandas as pd
 import svidreader
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QMdiArea, \
@@ -19,7 +18,9 @@ from bbo.yaml import load as yaml_load
 
 from labelgui.misc import archive_cfg, read_video_meta
 from labelgui.select_user import SelectUserWindow
-from labelgui.ui import ControlsDock, SketchDock, ViewerSubWindow
+from .controls_dock import ControlsDock
+from .sketch_dock import SketchDock
+from .viewer_sub_window import ViewerSubWindow
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +64,6 @@ class MainWindow(QMainWindow):
         self.d_time = self.cfg['d_time']
         self.min_time = int(self.cfg['min_time'])
         self.max_time = int(self.cfg['max_time'])
-        # self.allowed_frames = np.arange(self.min_frame, self.max_frame, self.d_frame, dtype=int)
-        # self.frame_idx = self.min_frame
         self.current_time = 0.0
         self.times = []
         self.cam_times = []
@@ -195,7 +194,9 @@ class MainWindow(QMainWindow):
             for cam_idx, cam in enumerate(self.cameras):
                 video_times_dict = self.cfg["video_times"].get(cam_idx, {})
                 if 'file' in video_times_dict:
-                    cam_times = pd.read_csv(video_times_dict['file'])
+                    # TODO: Check with Kay
+                    times_pd = pd.read_csv(video_times_dict['file'], comment="#")
+                    cam_times = np.array(times_pd.iloc[:, 0]).astype(float) # Loading times from first column
                     assert len(cam_times) == num_frames[cam_idx], (f"video times in the csv file "
                                                                    f"do not match the number of frames in the recording {cam_idx}")
                 else:
@@ -206,8 +207,9 @@ class MainWindow(QMainWindow):
 
             # Concatenate and remove duplicates
             times = set(sum(self.cam_times, []))
-            times = np.asarray(list(times))
+            times = np.asarray(sorted(times))
             times = times[(times >= self.min_time) & (times < self.max_time)]
+            logger.log(logging.INFO, f"{len(times)} VALID TIMEPOINTS SELECTED")
             self.times = times.tolist()
 
     def restore_last_frame_time(self):
@@ -268,7 +270,7 @@ class MainWindow(QMainWindow):
         self.dock_sketch.fill_controls()
 
         # Controls dock
-        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time,6)))
+        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
         self.dock_controls.widgets['fields']['d_time'].setText(str(self.d_time))
 
     def connect_controls(self):
@@ -437,7 +439,7 @@ class MainWindow(QMainWindow):
                     label_dict[cam_frame_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
 
                     self.subwindows[cam_idx].clear_label(label_name=label_name,
-                                                          label_type='label')
+                                                         label_type='label')
 
             case _:
                 logger.log(logging.WARNING, f'Unknown action {action} for cam_idx {cam_idx} '
@@ -495,16 +497,6 @@ class MainWindow(QMainWindow):
     def get_sensor_sizes(self):
         return [cam["header"]["sensorsize"] for cam in self.cameras]
 
-    def get_camera_names(self, all_cams=False):
-        if all_cams:
-            return [cam["file_name"] for cam in self.cameras]
-        else:
-            return [self.cameras[i]['file_name'] for i in self.cfg['allowed_cams']]
-
-    def get_camera_name_frm_index(self, cam_idx:int):
-        #
-        return self.get_camera_names(all_cams=True)[cam_idx]
-
     def get_x_res(self):
         return [ss[0] for ss in self.get_sensor_sizes()]
 
@@ -547,6 +539,9 @@ class MainWindow(QMainWindow):
 
     # Setter functions
     def set_time(self, input_time: float, mqtt_publish=True):
+        if input_time not in self.times:
+            return
+
         self.current_time = input_time
 
         for cam_idx, subwin in self.subwindows.items():
@@ -650,7 +645,7 @@ class MainWindow(QMainWindow):
             logger.log(logging.INFO, f"Saving Labels As {file}")
             self.save_labels(Path(file))
 
-    def mdi_view_select(self, view_mode : str):
+    def mdi_view_select(self, view_mode: str):
         match view_mode:
             case "tab_view":
                 self.mdi.setViewMode(QMdiArea.TabbedView)
@@ -686,7 +681,7 @@ class MainWindow(QMainWindow):
 
     def goto_next_time(self):
         self.set_time(self.get_valid_time(self.current_time + self.d_time))
-        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time,6)))
+        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
 
         """t = self.current_time + self.d_time
         current_time_idx = self.times.index(self.current_time)
@@ -697,7 +692,7 @@ class MainWindow(QMainWindow):
 
     def goto_previous_time(self):
         self.set_time(self.get_valid_time(self.current_time - self.d_time))
-        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time,6)))
+        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
         """t = self.current_time - self.d_time
         current_time_idx = self.times.index(self.current_time)
         diff_idx = np.argmin(np.abs(np.asarray(self.times[:current_time_idx]) - t))
@@ -715,9 +710,9 @@ class MainWindow(QMainWindow):
         if not event.isAutoRepeat():
             if self.cfg['button_save_labels'] and event.key() == Qt.Key_S:
                 self.save_labels()
-            if self.cfg['button_next'] and event.key() == Qt.Key_D:
+            if self.cfg['button_next_time'] and event.key() == Qt.Key_D:
                 self.goto_next_time()
-            elif self.cfg['button_previous'] and event.key() == Qt.Key_A:
+            elif self.cfg['button_previous_time'] and event.key() == Qt.Key_A:
                 self.goto_previous_time()
             elif self.cfg['button_next_label'] and event.key() == Qt.Key_N:
                 self.dock_sketch.widgets['buttons']['next_label'].click()
