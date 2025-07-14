@@ -165,7 +165,7 @@ class MainWindow(QMainWindow):
         if ref_labels_file.is_file():
             self.ref_labels = label_lib.load(ref_labels_file, v0_format=False)
         else:
-            logger.log(logging.WARNING, f"Reference labels file {ref_labels_file.as_posix()} not found")
+            logger.log(logging.WARNING, f" Not Found: reference labels file {ref_labels_file.as_posix()} ")
 
     def load_recordings(self, files: List[Path]):
         cameras = []
@@ -262,7 +262,7 @@ class MainWindow(QMainWindow):
                 window.redraw_frame()
                 self.subwindows[cam_idx] = window
 
-        self.mdi.tileSubWindows()
+        self.mdi.setViewMode(QMdiArea.TabbedView)
         self.set_time(self.current_time)
 
     def fill_controls(self):
@@ -393,9 +393,8 @@ class MainWindow(QMainWindow):
                             not np.any(np.isnan(label_dict[frame_idx]['coords'][cam_idx])):
                         line_coords = np.concatenate((label_dict[frame_idx]['coords'][(cam_idx,), :],
                                                       ref_label_dict[frame_idx]['coords'][(cam_idx,), :]), axis=0)
-                        logger.log(logging.INFO, f"Drawing line, {line_coords.shape}, {line_coords}")
-                        # TODO: test this
-                        subwin.draw_label(*line_coords.T, label_name, label_type='error_line')
+                        logger.log(logging.DEBUG, f"Drawing line, {line_coords.shape}, {line_coords}")
+                        subwin.draw_line(*line_coords.T, line_name=label_name, line_type='error_line')
 
     def viewer_click(self, x: float, y: float, cam_frame_idx: int, cam_idx: int, action: str = 'create_label'):
         # Initialize array
@@ -429,10 +428,9 @@ class MainWindow(QMainWindow):
                     self.labels['labeler_list'].append(self.user)
 
                 label_dict = self.labels['labels'].get(label_name, {})
+                # Only delete the label if it already exists
                 if (cam_frame_idx in label_dict and
                         not np.any(np.isnan(label_dict[cam_frame_idx]['coords'][cam_idx, :]))):
-                    # Only delete the label if it already exists
-
                     label_dict[cam_frame_idx]['coords'][cam_idx, :] = np.nan
                     # For synchronization, deletion time and user must be recorded
                     label_dict[cam_frame_idx]['point_times'][cam_idx] = time.time()

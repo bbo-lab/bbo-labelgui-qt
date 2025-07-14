@@ -17,7 +17,7 @@ class ViewerSubWindow(QMdiSubWindow):
         'ref_label': {'symbol': 'x', 'symbolBrush': 'red', 'symbolSize': 6, 'symbolPen': None},
 
         'current_label': {'symbolBrush': 'darkgreen', 'symbolSize': 8},
-        'error_line': {}
+        'error_line': {'color':'red', 'width':2}
     }
 
     def __init__(self, index: int, reader, parent=None, img_item=None):
@@ -90,11 +90,19 @@ class ViewerSubWindow(QMdiSubWindow):
         if label_name not in self.labels[label_type]:
             label_params = self.plot_params[label_type].copy()
             self.labels[label_type][label_name] = self.plot_wget.plot([x], [y], **label_params)
+            # The only way is to set this explicitly; all the point labels are set with a Z value of 10
+            self.labels[label_type][label_name].setZValue(10)
         else:
             self.labels[label_type][label_name].setData([x], [y])
 
         if current_label:
             self.set_current_label(label_name)
+
+    def draw_line(self, xs, ys, line_name: str, line_type='error_line'):
+        if line_name not in self.labels[line_type]:
+            line_params = self.plot_params[line_type].copy()
+            line_pen = pg.mkPen(**line_params)
+            self.labels[line_type][line_name] = self.plot_wget.plot(xs, ys, pen=line_pen)
 
     def mouse_clicked(self, event):
         if self.frame_idx is None:
