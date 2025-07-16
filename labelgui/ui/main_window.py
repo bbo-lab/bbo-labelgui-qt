@@ -64,7 +64,7 @@ class MainWindow(QMainWindow):
         self.d_time = self.cfg['d_time']
         self.min_time = int(self.cfg['min_time'])
         self.max_time = int(self.cfg['max_time'])
-        self.current_time = 0.0
+        self.current_time = None
         self.times = []
         self.cam_times = []
         self.dock_sketch.sketch_zoom_scale = self.cfg.get('sketch_zoom_scale', 0.1)
@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
 
         # Loaded data
         self.init_files_folders()
-        self.dock_sketch.load_sketches(sketch_files=[self.drive / Path(file)
+        self.dock_sketch.load_sketches(sketch_files=[Path(file)
                                                      for file in self.cfg['sketch_files']])
 
         load_labels_file = self.cfg["load_labels_file"]
@@ -211,13 +211,14 @@ class MainWindow(QMainWindow):
             times = times[(times >= self.min_time) & (times < self.max_time)]
             logger.log(logging.INFO, f"{len(times)} VALID TIMEPOINTS SELECTED")
             self.times = times.tolist()
+            self.current_time = self.times[0]
 
     def restore_last_frame_time(self):
         # Retrieve last frame from 'exit' file
         file_exit_status = self.labels_folder / 'exit_status.npy'
         if file_exit_status.is_file():
             exit_status = np.load(file_exit_status.as_posix(), allow_pickle=True)[()]
-            self.set_time(exit_status['i_time'])
+            self.set_time(exit_status.get('i_time', self.times[0]))
 
     def init_assistant_folders(self, recording_folder: Path):
         # folder structure
@@ -258,7 +259,7 @@ class MainWindow(QMainWindow):
                 window = ViewerSubWindow(index=cam_idx,
                                          reader=cam['reader'],
                                          parent=self.mdi)
-                window.setWindowTitle(f'{cam['file_name']} ({cam_idx})')
+                window.setWindowTitle(f"{cam['file_name']} ({cam_idx})")
                 window.redraw_frame()
                 self.subwindows[cam_idx] = window
 
@@ -274,28 +275,42 @@ class MainWindow(QMainWindow):
         self.dock_controls.widgets['fields']['d_time'].setText(str(self.d_time))
 
     def connect_controls(self):
+        controls_cfg = self.cfg['controls']
         list_labels = self.dock_sketch.list_labels
 
         # Sketches dock
         self.dock_sketch.connect_canvas()
-        self.dock_sketch.connect_label_buttons()
+        self.dock_sketch.connect_label_buttons(controls_cfg)
         self.dock_sketch.combobox_sketches.currentIndexChanged.connect(self.sketch_select)
         list_labels.currentItemChanged.connect(self.label_select)
         list_labels.setCurrentRow(0)
 
         # Control dock
-        self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
-            lambda: self.save_labels(None))
-        self.dock_controls.widgets['buttons']['home'].clicked.connect(
-            self.viewer_zoom_reset)
+        if controls_cfg['buttons']['save_labels']:
+            self.dock_controls.widgets['buttons']['save_labels'].setEnabled(True)
+            self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
+                lambda: self.save_labels(None))
+        if controls_cfg['buttons']['zoom_out']:
+            self.dock_controls.widgets['buttons']['zoom_out'].setEnabled(True)
+            self.dock_controls.widgets['buttons']['zoom_out'].clicked.connect(
+                self.viewer_zoom_reset)
+        self.dock_controls.widgets['buttons']['single_label_mode'].setEnabled(
+            controls_cfg['buttons']['single_label_mode'])
 
-        self.dock_controls.widgets['buttons']['previous_time'].clicked.connect(self.goto_previous_time)
-        self.dock_controls.widgets['buttons']['next_time'].clicked.connect(self.goto_next_time)
-        self.dock_controls.widgets['fields']['current_time'].returnPressed.connect(self.field_current_time_changed)
-        # TODO: figure out the function of d_time/d_frame when editable
-        self.dock_controls.widgets['fields']['d_time'].setReadOnly(True)
-        # self.dock_controls.widgets['fields']['d_frame'].returnPressed.connect(
-        #    lambda: self.set_d_frame(int(self.dock_controls.widgets['fields']['d_frame'].text())))
+        if controls_cfg['buttons']['previous_time']:
+            self.dock_controls.widgets['buttons']['previous_time'].setEnabled(True)
+            self.dock_controls.widgets['buttons']['previous_time'].clicked.connect(self.goto_previous_time)
+        if controls_cfg['buttons']['next_time']:
+            self.dock_controls.widgets['buttons']['next_time'].setEnabled(True)
+            self.dock_controls.widgets['buttons']['next_time'].clicked.connect(self.goto_next_time)
+
+        if controls_cfg['fields']['current_time']:
+            self.dock_controls.widgets['fields']['current_time'].setEnabled(True)
+            self.dock_controls.widgets['fields']['current_time'].returnPressed.connect(self.field_current_time_changed)
+            # TODO: find a better event
+        if controls_cfg['fields']['d_time']:
+            self.dock_controls.widgets['fields']['d_time'].setEnabled(True)
+            self.dock_controls.widgets['fields']['d_time'].returnPressed.connect(self.set_d_time)
 
         # Viewer
         for _, subwin in self.subwindows.items():
@@ -418,6 +433,8 @@ class MainWindow(QMainWindow):
             case 'create_label':
                 self.add_label([x, y], label_name, cam_frame_idx, cam_idx)
                 self.viewer_plot_labels(label_names=[label_name])
+                if self.dock_controls.widgets['buttons']['single_label_mode'].isChecked():
+                    self.goto_next_time()
 
             case 'auto_label':
                 # TODO:
@@ -522,11 +539,11 @@ class MainWindow(QMainWindow):
         else:
             search_slice = times_arr[:current_time_idx + 1][::-1]
 
-        if len(search_slice) == 0:
-            return self.current_time
-        else:
+        if len(search_slice) > 0:
             diff_idx = np.argmin(np.abs(search_slice - input_time))
             return self.times[current_time_idx + (diff_sign * diff_idx)]
+        else:
+            return self.current_time
 
     def get_current_label(self):
         selected_label = self.dock_sketch.list_labels.currentItem()
@@ -554,6 +571,9 @@ class MainWindow(QMainWindow):
 
         # Viewer
         self.viewer_change_frame()
+
+    def set_d_time(self):
+        self.d_time = float(self.dock_controls.widgets['fields']['d_time'].text())
 
     @DeprecationWarning
     def set_frame_idx(self, frame_idx: int or str, mqtt_publish=True):
@@ -681,22 +701,9 @@ class MainWindow(QMainWindow):
         self.set_time(self.get_valid_time(self.current_time + self.d_time))
         self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
 
-        """t = self.current_time + self.d_time
-        current_time_idx = self.times.index(self.current_time)
-        diff_idx = np.argmin(np.abs(np.asarray(self.times[current_time_idx:]) - t))
-        if diff_idx == 0:
-            diff_idx = 1
-        self.set_time(self.times[current_time_idx + diff_idx])"""
-
     def goto_previous_time(self):
         self.set_time(self.get_valid_time(self.current_time - self.d_time))
         self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
-        """t = self.current_time - self.d_time
-        current_time_idx = self.times.index(self.current_time)
-        diff_idx = np.argmin(np.abs(np.asarray(self.times[:current_time_idx]) - t))
-        if diff_idx == 0:
-            diff_idx = 1
-        self.set_time(self.times[current_time_idx - diff_idx])"""
 
     def field_current_time_changed(self):
         new_time = float(self.dock_controls.widgets['fields']['current_time'].text())
@@ -705,21 +712,23 @@ class MainWindow(QMainWindow):
 
     # Shortcuts
     def keyPressEvent(self, event):
+        controls_cfg = self.cfg['controls']
+        if controls_cfg['buttons']['next_time'] and event.key() == Qt.Key_D:
+            self.goto_next_time()
+        elif controls_cfg['buttons']['previous_time'] and event.key() == Qt.Key_A:
+            self.goto_previous_time()
+
         if not event.isAutoRepeat():
-            if self.cfg['button_save_labels'] and event.key() == Qt.Key_S:
+            if controls_cfg['buttons']['save_labels'] and event.key() == Qt.Key_S:
                 self.save_labels()
-            if self.cfg['button_next_time'] and event.key() == Qt.Key_D:
-                self.goto_next_time()
-            elif self.cfg['button_previous_time'] and event.key() == Qt.Key_A:
-                self.goto_previous_time()
-            elif self.cfg['button_next_label'] and event.key() == Qt.Key_N:
+            elif controls_cfg['buttons']['zoom_out'] and event.key() == Qt.Key_O:
+                self.dock_controls.widgets['buttons']['zoom_out'].click()
+            elif controls_cfg['buttons']['next_label'] and event.key() == Qt.Key_N:
                 self.dock_sketch.widgets['buttons']['next_label'].click()
-            elif self.cfg['button_previous_label'] and event.key() == Qt.Key_P:
+            elif controls_cfg['buttons']['previous_label'] and event.key() == Qt.Key_P:
                 self.dock_sketch.widgets['buttons']['previous_label'].click()
-            elif self.cfg['button_home'] and event.key() == Qt.Key_H:
-                self.dock_controls.widgets['buttons']['home'].click()
         else:
-            logger.log(logging.WARNING, "Auto-repeat is not supported")
+            logger.log(logging.WARNING, "Auto-repeat is not supported for these actions")
 
     def closeEvent(self, event):
         exit_status = {'i_time': self.current_time}

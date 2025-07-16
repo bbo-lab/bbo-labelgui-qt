@@ -1,5 +1,6 @@
 import shutil
 from pathlib import Path
+import os
 
 import numpy as np
 import yaml
@@ -32,3 +33,11 @@ def read_video_meta(reader):
         header['offset'] = tuple(np.asarray([0, 0]))
 
     return header
+
+def read_cfg_from_npy(path:str, save_yml=True):
+    assert path.endswith(".py"), "Invalid file format"
+    with open(path, 'r') as cfg_file:
+        config_txt = cfg_file.read()
+        cfg = eval(config_txt)  # this is ugly since eval is used (make sure only trusted strings are evaluated)
+
+    return cfg

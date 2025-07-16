@@ -68,9 +68,9 @@ class SketchDock(QDockWidget):
 
         button_widget = QWidget()
         hbox = QHBoxLayout(button_widget)
-        self.widgets['buttons']['previous_label'] = QPushButton("Previous Label (P)", self)
+        self.widgets['buttons']['previous_label'] = QPushButton("Previous Label (P)", self, enabled=False)
         hbox.addWidget(self.widgets['buttons']['previous_label'])
-        self.widgets['buttons']['next_label'] = QPushButton("Next Label (N)", self)
+        self.widgets['buttons']['next_label'] = QPushButton("Next Label (N)", self, enabled=False)
         hbox.addWidget(self.widgets['buttons']['next_label'])
         main_layout.addWidget(button_widget)
 
@@ -168,12 +168,17 @@ class SketchDock(QDockWidget):
     def connect_canvas(self):
         self.graph_widgets['canvas']['sketch'].mpl_connect('button_press_event', self.sketch_click)
 
-    def connect_label_buttons(self):
+    def connect_label_buttons(self, controls_cfg:dict):
         ll = self.list_labels
-        self.widgets['buttons']['next_label'].clicked.connect(lambda:
-                                                              ll.setCurrentRow((ll.currentRow() + 1) % ll.count()))
-        self.widgets['buttons']['previous_label'].clicked.connect(lambda:
-                                                                  ll.setCurrentRow((ll.currentRow() - 1) % ll.count()))
+        if controls_cfg['buttons']['next_label']:
+            self.widgets['buttons']['next_label'].setEnabled(True)
+            self.widgets['buttons']['next_label'].clicked.connect(lambda:
+                                                                  ll.setCurrentRow((ll.currentRow() + 1) % ll.count()))
+
+        if controls_cfg['buttons']['previous_label']:
+            self.widgets['buttons']['previous_label'].setEnabled(True)
+            self.widgets['buttons']['previous_label'].clicked.connect(lambda:
+                                                                      ll.setCurrentRow((ll.currentRow() - 1) % ll.count()))
 
     def update_sketch(self, current_label_name=None):
         # Updates labels on the sketch

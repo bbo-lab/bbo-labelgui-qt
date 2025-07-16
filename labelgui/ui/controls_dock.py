@@ -1,6 +1,7 @@
 from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
                              QPushButton, QDockWidget)
+from torch.backends.cudnn import enabled
 
 
 class ControlsDock(QDockWidget):
@@ -33,7 +34,11 @@ class ControlsDock(QDockWidget):
 
         row += 1
         self.add_button("Save Labels (S)", row, 0, "save_labels")
-        self.add_button("Home (H)", row, 1, "home")
+        self.add_button("Zoom Out (O)", row, 1, "zoom_out")
+
+        row += 1
+        self.add_button("Single Label Mode", row, 0, "single_label_mode")
+        self.widgets['buttons']['single_label_mode'].setCheckable(True)
 
         self.setWidget(main_widget)
 
@@ -47,7 +52,7 @@ class ControlsDock(QDockWidget):
         self.widgets['labels'][label_key] = label_widget
 
     def add_field(self, row_idx: int, col_idx: int, field_key: str, fill_int=False):
-        field_widget = QLineEdit()
+        field_widget = QLineEdit(self, enabled=False)
         if fill_int:
             field_widget.setValidator(QIntValidator())
         self.layout_grid.setColumnStretch(col_idx, 1)
@@ -56,7 +61,7 @@ class ControlsDock(QDockWidget):
         self.widgets['fields'][field_key] = field_widget
 
     def add_button(self, button_text: str, row_idx: int, col_idx: int, button_key=None):
-        button_widget = QPushButton(button_text, self)
+        button_widget = QPushButton(button_text, self, enabled=False)
         self.layout_grid.setColumnStretch(col_idx, 1)
         self.layout_grid.setRowStretch(row_idx, 1)
         self.layout_grid.addWidget(button_widget, row_idx, col_idx, 1, 1)

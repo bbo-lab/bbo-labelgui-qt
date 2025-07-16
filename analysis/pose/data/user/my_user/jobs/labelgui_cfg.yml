@@ -2,14 +2,15 @@
 sketch_files: [
   "{storage}/analysis/pose/data/sketch/20230525_sketch_hellenthal.npy",  # location wrt drive path
   "{storage}/analysis/pose/data/sketch/sketch.npy",
+  "{file}/../../../sketch/sketch.npy"
   ]
 
 # VIDEOS
 dataset_name: "bc_20230524_N_2"  # If empty, takes name of recording folder
-recording_folder: "{storage}/bc_20230524_N_2"
+recording_folder: "{storage}/bulk/bird_hellenthal_FrontField/20230522_20230525_FlightWindow/20230524-1300/"
 recording_filenames: [
-  "../bulk/bird_hellenthal_FrontField/20230522_20230525_FlightWindow/20230524-1300/Niqui/front/CADDX000064.MP4",
-  "../bulk/bird_hellenthal_FrontField/20230522_20230525_FlightWindow/20230524-1300/Niqui/back/CADDX000056.MP4"
+  "Niqui/front/CADDX000064.MP4",
+  "Niqui/back/CADDX000056.MP4"
 ]
 video_times:
   0:
@@ -21,45 +22,38 @@ video_times:
     offset: 100.0
 
 # LABELS
-load_labels_file: # "{projects_repos}/junker-bird/data/labelgui/labels-bc_20230524_N_2.yml" # str: Give path to file or takes labels from canonical path
-reference_labels_file: False  # bool or str: If True, takes ref labels from the canonical path. Or specify path to file
+load_labels_file: "{projects_repos}/junker-bird/data/labelgui/labels-bc_20230524_N_2.yml" # str: Give path to file or takes labels from canonical path
+reference_labels_file: True  # bool or str: If True, takes ref labels from the canonical path. Or specify path to file
 
 # DATA SELECTION
 allowed_cams: [0,1,]
-min_time: 0.0
-max_time: 16000.0
-d_time: 2.5
+min_time: 0
+max_time: 100000
+d_time: 3
 
 # DISPLAY
 sketch_zoom_scale: 0.06
 
-# mode activation
-button_fast_labeling_mode_activate: True
-button_centric_view_mode_activate: False
-button_sketch_mode_activate: True
-# save settings
+# SAVE SETTINGS
 exit_save_labels: True
 auto_save: True
 auto_save_N0: 10
 auto_save_N1: 100
-# BUTTONS
-# general
-button_save_labels: True
-button_fast_labeling_mode: False
-button_centric_view_mode: False
-button_reprojection_mode: False
-# labels
-button_previous_label: True
-button_next_label: True
-# Recordings
-button_next_time: True
-button_previous_time: True
-# Viewer
-button_home: True
-# FIELDS
-field_vmin: True
-field_vmax: True
-field_current_time: True
-field_d_time: False
-# LISTS
-list_fast_labeling_mode: True
+
+# ACTIVATE/DEACTIVATE CONTROLS
+controls:
+  buttons:
+    # general
+    save_labels: True
+    single_label_mode: True
+    # labels
+    previous_label: True
+    next_label: True
+    # Recordings
+    next_time: True
+    previous_time: True
+    zoom_out: True
+
+  fields:
+    current_time: True
+    d_time: True
