@@ -1,0 +1,16 @@
+name: bbo_labelgui_qt
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pyqt
+  - matplotlib
+  - numpy<2.0
+  - pip:
+    - imageio[pyav]>=2.26
+    - bbo_svidreader
+    - bbo-ccvtools
+    - pyqtgraph
+    - bbo-bbo>=0.1.0
+    - paho-mqtt

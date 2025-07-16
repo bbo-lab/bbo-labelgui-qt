@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bbo-labelgui-qt"
+dynamic = ["version"]
+description = "GUI for guided data labeling"
+readme = "README.md"
+license = "LGPL-3.0-or-later"
+authors = [
+    { name = "BBO-lab @ caesar", email = "abhilash.cheekoti@mpinb.mpg.de" },
+]
+classifiers = [
+    "License :: OSI Approved :: GNU Lesser General Public License v2 or later (LGPLv2+)",
+    "Programming Language :: Python :: 3.10",
+]
+dependencies = [
+    "bbo-bbo>=0.1.0",
+    "bbo_ccvtools",
+    "bbo_svidreader",
+    "imageio",
+    "matplotlib",
+    "numpy<2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/bbo-lab/acm-traingui"
+
+[tool.hatch.version]
+path = "labelgui/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/labelgui",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["labelgui"]
+
