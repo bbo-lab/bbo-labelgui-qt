@@ -11,11 +11,16 @@ def save_cfg(save_path: Path, cfg):
     with open(save_path, "w") as yml_file:
         yaml.dump(cfg, yml_file, default_flow_style=False, sort_keys=False)
 
+def load_cfg(file_config: Path):
+    if file_config.as_posix().endswith('yml'):
+        return yaml_load(file_config)
+    else:
+        return read_cfg_from_py(file_config)
 
 def archive_cfg(cfg, target_dir: Path):
     if isinstance(cfg, Path):
         shutil.copy(cfg, target_dir.as_posix())
-        cfg = yaml_load(cfg)
+        cfg = load_cfg(cfg)
 
     save_cfg(target_dir / "labelgui_cfg_processed.yml", cfg)
 
@@ -34,10 +39,67 @@ def read_video_meta(reader):
 
     return header
 
-def read_cfg_from_npy(path:str, save_yml=True):
-    assert path.endswith(".py"), "Invalid file format"
-    with open(path, 'r') as cfg_file:
+def read_cfg_from_py(path:Path, save_yml=False):
+    assert path.as_posix().endswith(".py"), "Invalid file format"
+    with open(path.as_posix(), 'r') as cfg_file:
         config_txt = cfg_file.read()
-        cfg = eval(config_txt)  # this is ugly since eval is used (make sure only trusted strings are evaluated)
+        cfg_old = eval(config_txt)  # this is ugly since eval is used (make sure only trusted strings are evaluated)
 
-    return cfg
+    cfg_dict = {
+        # SKETCH
+        "sketch_files": [cfg_old['standardSketchFile']],
+
+        # VIDEOS
+        "dataset_name": "",  # If empty, takes name of recording folder
+        "recording_folder": cfg_old['standardRecordingFolder'],
+        "recording_filenames": cfg_old['standardRecordingFileNames'],
+
+        "video_times": {i_rec: {
+            # file: Either provide file with frame times or 'fps'
+            "fps": 1,
+            "offset": 0.0,
+          }
+            for i_rec, _ in enumerate(cfg_old['standardRecordingFileNames'])
+        },
+
+        # LABELS
+        "load_labels_file": None,# str: Give path to file or takes labels from canonical path
+        "reference_labels_file": False,  # bool or str: If True, takes ref labels from the canonical path. Or specify path to file
+
+        # DATA SELECTION
+        "allowed_cams": cfg_old['allowed_cams'],
+        "min_time": cfg_old['minPose'],
+        "max_time": cfg_old['maxPose'],
+        "d_time": cfg_old['dFrame'],
+
+        # DISPLAY
+        "sketch_zoom_scale": cfg_old['sketchZoomScale'],
+
+        # SAVE SETTINGS
+        "exit_save_labels": cfg_old['exitSaveLabels'],
+        "auto_save": cfg_old['autoSave'],
+        "auto_save_N0": cfg_old['autoSaveN0'],
+        "auto_save_N1": cfg_old['autoSaveN1'],
+
+        # ACTIVATE/DEACTIVATE CONTROLS
+        "controls": {
+          "buttons": {
+            # general
+            "save_labels": cfg_old['button_saveLabels'],
+            "single_label_mode": True,
+            "zoom_out": cfg_old['button_home'],
+            # labels
+            "previous_label": cfg_old['button_previousLabel'],
+            "next_label": cfg_old['button_nextLabel'],
+            # Recordings
+            "next_time": cfg_old['button_next'],
+            "previous_time": cfg_old['button_previous'],
+          },
+          "fields": {
+            "current_time": cfg_old['field_currentPose'],
+            "d_time": cfg_old['field_dFrame']
+          }
+        }
+    }
+
+    return  cfg_dict

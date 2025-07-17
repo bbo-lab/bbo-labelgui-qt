@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     # Parse inputs
-    parser = argparse.ArgumentParser(description="ACM-traingui - Simple GUI to .")
+    parser = argparse.ArgumentParser(description="LabelGUI - Simple GUI to annotate data.")
     parser.add_argument('INPUT_PATH', type=str, help="Directory with detect job configuration")
     parser.add_argument('--labels', type=str, required=False, nargs='*', default=None,
                         help="If given, merges labes.npz in given dirs into labels.npz file specified in INPUT_PATH "

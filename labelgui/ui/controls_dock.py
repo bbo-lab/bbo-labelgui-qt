@@ -1,7 +1,6 @@
 from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
                              QPushButton, QDockWidget)
-from torch.backends.cudnn import enabled
 
 
 class ControlsDock(QDockWidget):
@@ -69,28 +68,3 @@ class ControlsDock(QDockWidget):
             button_key = button_text
         self.widgets['buttons'][button_key] = button_widget
 
-
-def get_button_status(button: QPushButton):
-    return button.isChecked()
-
-
-def update_button_stylesheet(button: QPushButton):
-    if get_button_status(button):
-        button.setStyleSheet("background-color: green;")
-    else:
-        button.setStyleSheet("")
-
-
-def toggle_button(button: QPushButton):
-    button.setChecked(not get_button_status(button))
-    update_button_stylesheet(button)
-
-
-def disable_button(button: QPushButton):
-    if get_button_status(button):
-        toggle_button(button)
-
-
-def enable_button(button: QPushButton):
-    if not get_button_status(button):
-        toggle_button(button)

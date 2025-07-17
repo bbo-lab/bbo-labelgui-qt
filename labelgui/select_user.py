@@ -88,7 +88,8 @@ class SelectUserWindow(QDialog):
     def user_change(self):
         job_dir = self.drive / 'data' / 'user' / self.get_user() / 'jobs'
         if job_dir.is_dir():
-            jobs = glob((job_dir / '*.yml').as_posix())
+            jobs = glob((job_dir / '*.yml').as_posix()) + glob((job_dir / '*.py').as_posix())
+
             if len(jobs) > 0:
                 jobs = sorted(jobs)
                 self.job_combobox.setDisabled(False)

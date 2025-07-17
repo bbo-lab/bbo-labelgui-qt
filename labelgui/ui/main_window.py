@@ -14,9 +14,8 @@ from PyQt5.QtWidgets import QMdiArea, \
     QFileDialog, \
     QMainWindow
 from bbo import label_lib, path_management as bbo_pm
-from bbo.yaml import load as yaml_load
 
-from labelgui.misc import archive_cfg, read_video_meta
+from labelgui import misc as labelgui_misc
 from labelgui.select_user import SelectUserWindow
 from .controls_dock import ControlsDock
 from .sketch_dock import SketchDock
@@ -119,18 +118,22 @@ class MainWindow(QMainWindow):
         # create folder structure / save backup / load last frame
         self.init_assistant_folders(recording_folder)
         self.init_autosave()
-        archive_cfg(self.file_config, self.labels_folder)
+        labelgui_misc.archive_cfg(self.file_config, self.labels_folder)
         self.restore_last_frame_time()
 
     def load_cfg(self):
         if os.path.isdir(self.drive):
             self.user, job, correct_exit = SelectUserWindow.start(self.drive)
             if correct_exit:
+                file_loc = self.drive / 'data' / 'user' / self.user
+                file_config = file_loc / 'labelgui_cfg.yml'
                 if job is not None:
-                    file_config = self.drive / 'data' / 'user' / self.user / 'jobs' / f'{job}.yml'
-                else:
-                    file_config = self.drive / 'data' / 'user' / self.user / 'labelgui_cfg.yml'
-                self.cfg = yaml_load(file_config)
+                    if (file_loc / 'jobs' / f'{job}.yml').is_file():
+                        file_config = file_loc / 'jobs' / f'{job}.yml'
+                    elif (file_loc / 'jobs' / f'{job}.py').is_file():
+                        file_config = file_loc / 'jobs' / f'{job}.py'
+
+                self.cfg = labelgui_misc.load_cfg(file_config)
             else:
                 sys.exit()
         else:
@@ -173,7 +176,7 @@ class MainWindow(QMainWindow):
         for file in files:
             logger.log(logging.INFO, f"File name: {file.name}")
             reader = svidreader.get_reader(file.as_posix(), backend="iio", cache=True)
-            header = read_video_meta(reader)
+            header = labelgui_misc.read_video_meta(reader)
             cam = {
                 'file_name': file.name,
                 'reader': reader,
@@ -235,7 +238,7 @@ class MainWindow(QMainWindow):
             os.mkdir(backup_folder)
         file = self.labels_folder / 'labelgui_cfg.yml'
         if file.is_file():
-            archive_cfg(file, backup_folder)
+            labelgui_misc.archive_cfg(file, backup_folder)
         file = self.labels_folder / 'labels.yml'
         try:
             labels_old = label_lib.load(file, v0_format=False)
@@ -248,7 +251,7 @@ class MainWindow(QMainWindow):
         autosave_folder = self.labels_folder / 'autosave'
         if not autosave_folder.is_dir():
             os.makedirs(autosave_folder)
-        archive_cfg(self.file_config, autosave_folder)
+        labelgui_misc.archive_cfg(self.file_config, autosave_folder)
 
     # Init gui functions
     def init_viewer(self):
@@ -306,11 +309,10 @@ class MainWindow(QMainWindow):
 
         if controls_cfg['fields']['current_time']:
             self.dock_controls.widgets['fields']['current_time'].setEnabled(True)
-            self.dock_controls.widgets['fields']['current_time'].returnPressed.connect(self.field_current_time_changed)
-            # TODO: find a better event
+            self.dock_controls.widgets['fields']['current_time'].editingFinished.connect(self.field_current_time_changed)
         if controls_cfg['fields']['d_time']:
             self.dock_controls.widgets['fields']['d_time'].setEnabled(True)
-            self.dock_controls.widgets['fields']['d_time'].returnPressed.connect(self.set_d_time)
+            self.dock_controls.widgets['fields']['d_time'].editingFinished.connect(self.set_d_time)
 
         # Viewer
         for _, subwin in self.subwindows.items():
@@ -713,12 +715,13 @@ class MainWindow(QMainWindow):
     # Shortcuts
     def keyPressEvent(self, event):
         controls_cfg = self.cfg['controls']
-        if controls_cfg['buttons']['next_time'] and event.key() == Qt.Key_D:
-            self.goto_next_time()
-        elif controls_cfg['buttons']['previous_time'] and event.key() == Qt.Key_A:
-            self.goto_previous_time()
 
-        if not event.isAutoRepeat():
+        if event.isAutoRepeat():
+            if controls_cfg['buttons']['next_time'] and event.key() == Qt.Key_D:
+                self.goto_next_time()
+            elif controls_cfg['buttons']['previous_time'] and event.key() == Qt.Key_A:
+                self.goto_previous_time()
+        else:
             if controls_cfg['buttons']['save_labels'] and event.key() == Qt.Key_S:
                 self.save_labels()
             elif controls_cfg['buttons']['zoom_out'] and event.key() == Qt.Key_O:
@@ -727,8 +730,6 @@ class MainWindow(QMainWindow):
                 self.dock_sketch.widgets['buttons']['next_label'].click()
             elif controls_cfg['buttons']['previous_label'] and event.key() == Qt.Key_P:
                 self.dock_sketch.widgets['buttons']['previous_label'].click()
-        else:
-            logger.log(logging.WARNING, "Auto-repeat is not supported for these actions")
 
     def closeEvent(self, event):
         exit_status = {'i_time': self.current_time}
