@@ -2,7 +2,7 @@
 sketch_files: [
   "{storage}/analysis/pose/data/sketch/20230525_sketch_hellenthal.npy",  # location wrt drive path
   "{storage}/analysis/pose/data/sketch/sketch.npy",
-  "{file}/../../../sketch/sketch.npy"
+  # "{file}/../../../sketch/sketch.npy"
   ]
 
 # VIDEOS
@@ -14,10 +14,10 @@ recording_filenames: [
 ]
 video_times:
   0:
+    # file: Either provide file with frame times or 'fps'
     fps: 1
     offset: 0.0
   1:
-    # file: ""
     fps: 1
     offset: 100.0
 
@@ -46,13 +46,13 @@ controls:
     # general
     save_labels: True
     single_label_mode: True
+    zoom_out: True
     # labels
     previous_label: True
     next_label: True
     # Recordings
-    next_time: True
     previous_time: True
-    zoom_out: True
+    next_time: True
 
   fields:
     current_time: True

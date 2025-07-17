@@ -21,7 +21,7 @@ dependencies = [
     "bbo_svidreader",
     "imageio",
     "matplotlib",
-    "numpy<2.0",
+    "numpy",
 ]
 
 [project.urls]

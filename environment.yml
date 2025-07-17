@@ -6,7 +6,7 @@ dependencies:
   - pip
   - pyqt
   - matplotlib
-  - numpy<2.0
+  - numpy
   - pip:
     - imageio[pyav]>=2.26
     - bbo_svidreader
