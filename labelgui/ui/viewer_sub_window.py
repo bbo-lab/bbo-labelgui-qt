@@ -3,7 +3,8 @@ import logging
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import QApplication, QMdiSubWindow, QLabel, QSpinBox, QWidget, QVBoxLayout, QHBoxLayout
+from PyQt5.QtWidgets import QApplication, QMdiSubWindow, QLabel, QSpinBox, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox
+from build.lib.bbo.label_lib import update
 
 logger = logging.getLogger(__name__)
 
@@ -45,23 +46,27 @@ class ViewerSubWindow(QMdiSubWindow):
         # Contrast options
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout(bottom_widget)
-        bottom_layout.addWidget(QLabel("Intensity:"), alignment=Qt.AlignLeft)
+        bottom_layout.addWidget(QLabel("Intensity:"))
+
+        self.checkbox_adjust_level = QCheckBox('Adjust')
+        self.checkbox_adjust_level.setChecked(True)
+        bottom_layout.addWidget(self.checkbox_adjust_level)
 
         self.label_vmin = QLabel("vmin")
         self.box_vmin = QSpinBox()
         self.box_vmin.setKeyboardTracking(False)
-        bottom_layout.addWidget(self.label_vmin, alignment=Qt.AlignLeft)
-        bottom_layout.addWidget(self.box_vmin, alignment=Qt.AlignLeft)
+        bottom_layout.addWidget(self.label_vmin)
+        bottom_layout.addWidget(self.box_vmin)
 
         self.label_vmax = QLabel("vmax")
         self.box_vmax = QSpinBox()
         self.box_vmax.setKeyboardTracking(False)
-        bottom_layout.addWidget(self.label_vmax, alignment=Qt.AlignLeft)
-        bottom_layout.addWidget(self.box_vmax, alignment=Qt.AlignLeft)
+        bottom_layout.addWidget(self.label_vmax)
+        bottom_layout.addWidget(self.box_vmax)
         bottom_layout.addStretch()
 
         self.label_labeler = QLabel("")
-        bottom_layout.addWidget(self.label_labeler, alignment=Qt.AlignRight)
+        bottom_layout.addWidget(self.label_labeler)
 
         self.set_intensity_range()
         main_layout.addWidget(bottom_widget)
@@ -73,18 +78,21 @@ class ViewerSubWindow(QMdiSubWindow):
                 self.img_item.clear()
             return
 
-        img = self.reader.get_data(self.frame_idx)
-        img = np.clip(img, self.box_vmin.value(), self.box_vmax.value())
+        img = self.reader.get_data(self.frame_idx).copy()
+        adjust_level = self.checkbox_adjust_level.isChecked()
+        levels = [self.box_vmin.value(), self.box_vmax.value()]
+        img = np.clip(img, *levels)
+        if not adjust_level:
+            levels = [self.box_vmin.minimum(), self.box_vmax.maximum()]
 
         if self.img_item is None:
             img_y, img_x = img.shape[:2]
-            self.img_item = pg.ImageItem(img, axisOrder='row-major',
-                                         autoLevels=True)
+            self.img_item = pg.ImageItem(img, axisOrder='row-major', levels=levels)
             self.plot_wget.addItem(self.img_item)
             self.plot_wget.setLimits(xMin=0, yMin=0,
                                      xMax=img_x, yMax=img_y)
         else:
-            self.img_item.setImage(img, autoLevels=True)
+            self.img_item.setImage(img, levels=levels)
 
     def draw_label(self, x: float, y: float, label_name: str, label_type='label', current_label=False):
         if label_name not in self.labels[label_type]:
@@ -174,6 +182,7 @@ class ViewerSubWindow(QMdiSubWindow):
     def connect_controls(self):
         self.box_vmin.valueChanged.connect(self.box_vmin_change)
         self.box_vmax.valueChanged.connect(self.box_vmax_change)
+        self.checkbox_adjust_level.stateChanged.connect(self.redraw_frame)
 
     def clear_label(self, label_name: str, label_type='label'):
         # Remove the label from the dictionary and the view if it exists

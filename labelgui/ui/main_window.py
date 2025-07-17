@@ -520,10 +520,6 @@ class MainWindow(QMainWindow):
     def get_y_res(self):
         return [ss[1] for ss in self.get_sensor_sizes()]
 
-    @DeprecationWarning
-    def get_valid_frame_idx(self, frame_idx: int):
-        return self.allowed_frames[np.argmin(np.abs(self.allowed_frames - frame_idx))]
-
     def get_valid_time(self, input_time: float):
         """
             Returns a valid time that is closest to the given 'time'
@@ -576,23 +572,6 @@ class MainWindow(QMainWindow):
 
     def set_d_time(self):
         self.d_time = float(self.dock_controls.widgets['fields']['d_time'].text())
-
-    @DeprecationWarning
-    def set_frame_idx(self, frame_idx: int or str, mqtt_publish=True):
-        if isinstance(frame_idx, str):
-            frame_idx = int(frame_idx)
-        self.frame_idx = self.get_valid_frame_idx(frame_idx)
-
-        if self.gui_loaded:
-            # Controls dock
-            self.dock_controls.widgets['labels']['labeler'].setText(
-                ", ".join(label_lib.get_frame_labelers(self.labels, self.frame_idx))
-            )
-            # Viewer
-            self.viewer_change_frame()
-
-        if mqtt_publish:
-            self.mqtt_publish()
 
     def set_docks_layout(self):
         # Right dock area
@@ -716,12 +695,11 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, event):
         controls_cfg = self.cfg['controls']
 
-        if event.isAutoRepeat():
-            if controls_cfg['buttons']['next_time'] and event.key() == Qt.Key_D:
-                self.goto_next_time()
-            elif controls_cfg['buttons']['previous_time'] and event.key() == Qt.Key_A:
-                self.goto_previous_time()
-        else:
+        if controls_cfg['buttons']['next_time'] and event.key() == Qt.Key_D:
+            self.goto_next_time()
+        elif controls_cfg['buttons']['previous_time'] and event.key() == Qt.Key_A:
+            self.goto_previous_time()
+        elif not event.isAutoRepeat():
             if controls_cfg['buttons']['save_labels'] and event.key() == Qt.Key_S:
                 self.save_labels()
             elif controls_cfg['buttons']['zoom_out'] and event.key() == Qt.Key_O:
