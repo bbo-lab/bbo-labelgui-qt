@@ -103,7 +103,6 @@ class MainWindow(QMainWindow):
         self.mqtt_connect()
 
         # TODO: ignoring calibration for now, will implement later if necessary
-        # TODO: Once we start labeling, it will be glitchy to add a new video. Is that okay?
 
     # Init functions
     def init_files_folders(self):
@@ -199,7 +198,7 @@ class MainWindow(QMainWindow):
                 if 'file' in video_times_dict:
                     # TODO: Check with Kay
                     times_pd = pd.read_csv(video_times_dict['file'], comment="#")
-                    cam_times = np.array(times_pd.iloc[:, 0]).astype(float) # Loading times from first column
+                    cam_times = np.array(times_pd.iloc[:, 0]).astype(float)  # Loading times from first column
                     assert len(cam_times) == num_frames[cam_idx], (f"video times in the csv file "
                                                                    f"do not match the number of frames in the recording {cam_idx}")
                 else:
@@ -309,7 +308,8 @@ class MainWindow(QMainWindow):
 
         if controls_cfg['fields']['current_time']:
             self.dock_controls.widgets['fields']['current_time'].setEnabled(True)
-            self.dock_controls.widgets['fields']['current_time'].editingFinished.connect(self.field_current_time_changed)
+            self.dock_controls.widgets['fields']['current_time'].editingFinished.connect(
+                self.field_current_time_changed)
         if controls_cfg['fields']['d_time']:
             self.dock_controls.widgets['fields']['d_time'].setEnabled(True)
             self.dock_controls.widgets['fields']['d_time'].editingFinished.connect(self.set_d_time)
@@ -493,13 +493,14 @@ class MainWindow(QMainWindow):
                 logger.log(logging.ERROR, "No connection to MQTT server.")
                 self.mqtt_client = None
 
-    def mqtt_on_message(self, client, userdata, message):
+    def mqtt_on_message(self, message):
+        # TODO: Test this function
         logger.log(logging.INFO, f"Received message '{message.payload.decode()}' on topic '{message.topic}'")
         match message.topic:
             case "bbo/sync/fr_idx":
                 fr_idx = int(message.payload.decode())
-                # TODO:
-                # self.set_frame_idx(fr_idx, mqtt_publish=False)
+                cam_idx = 0 # TODO: This needs to be changed when to support multiple cams
+                self.set_time(self.cam_times[cam_idx][fr_idx], mqtt_publish=False)
 
     # Getter functions
     def get_current_time(self):

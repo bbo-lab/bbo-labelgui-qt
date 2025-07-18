@@ -12,6 +12,32 @@ logger = logging.getLogger(__name__)
 
 
 class SketchDock(QDockWidget):
+    """
+    A dock widget for displaying and interacting with sketches.
+
+    This widget allows users to view sketches, zoom in on specific areas,
+    and interact with labeled points on the sketch.
+    """
+
+    FULL_SKETCH_DIMS = [0 / 3, 1 / 18, 1 / 3, 16 / 18]
+    ZOOM_SKETCH_DIMS = [1 / 3, 5 / 18, 2 / 3, 12 / 18]
+    # highlight markers
+    HIGHLIGHT_DOT_PARAMS = {
+        'color': 'darkgreen',
+        'marker': '.',
+        'markersize': 2,
+        'alpha': 1.0,
+        'zorder': 2,
+    }
+    HIGHLIGHT_CIRCLE_PARAMS = {
+        'color': 'darkgreen',
+        'marker': 'o',
+        'markersize': 40,
+        'markeredgewidth': 4,
+        'fillstyle': 'none',
+        'alpha': 2 / 3,
+        'zorder': 2,
+    }
 
     def __init__(self):
 
@@ -45,12 +71,10 @@ class SketchDock(QDockWidget):
         self.graph_widgets['canvas']['sketch'] = FigureCanvasQTAgg(self.graph_widgets['figs']['sketch'])
 
         # full
-        ax_sketch_dims = [0 / 3, 1 / 18, 1 / 3, 16 / 18]
-        self.graph_widgets['axes']['sketch'] = self.graph_widgets['figs']['sketch'].add_axes(ax_sketch_dims)
+        self.graph_widgets['axes']['sketch'] = self.graph_widgets['figs']['sketch'].add_axes(self.FULL_SKETCH_DIMS)
 
         # zoom
-        ax_sketch_zoom_dims = [1 / 3, 5 / 18, 2 / 3, 12 / 18]
-        self.graph_widgets['axes']['sketch_zoom'] = self.graph_widgets['figs']['sketch'].add_axes(ax_sketch_zoom_dims)
+        self.graph_widgets['axes']['sketch_zoom'] = self.graph_widgets['figs']['sketch'].add_axes(self.ZOOM_SKETCH_DIMS)
 
         main_layout.addWidget(self.graph_widgets['canvas']['sketch'])
 
@@ -131,31 +155,14 @@ class SketchDock(QDockWidget):
                                                            markersize=5,
                                                            zorder=1)
 
-        # Init highlight markers
-        highlight_dot_params = {
-            'color': 'darkgreen',
-            'marker': '.',
-            'markersize': 2,
-            'alpha': 1.0,
-            'zorder': 2,
-        }
-        highlight_circle_params = {
-            'color': 'darkgreen',
-            'marker': 'o',
-            'markersize': 40,
-            'markeredgewidth': 4,
-            'fillstyle': 'none',
-            'alpha': 2 / 3,
-            'zorder': 2,
-        }
         self.graph_widgets['highlight_dot']['sketch'] = self.graph_widgets['axes']['sketch'].plot(
-            [np.nan], [np.nan], **highlight_dot_params)[0]
+            [np.nan], [np.nan], **self.HIGHLIGHT_DOT_PARAMS)[0]
         self.graph_widgets['highlight_dot']['sketch_zoom'] = self.graph_widgets['axes']['sketch_zoom'].plot(
-            [np.nan], [np.nan], **highlight_dot_params)[0]
+            [np.nan], [np.nan], **self.HIGHLIGHT_DOT_PARAMS)[0]
         self.graph_widgets['highlight_circle']['sketch'] = self.graph_widgets['axes']['sketch'].plot(
-            [np.nan], [np.nan], **highlight_circle_params)[0]
+            [np.nan], [np.nan], **self.HIGHLIGHT_CIRCLE_PARAMS)[0]
         self.graph_widgets['highlight_circle']['sketch_zoom'] = self.graph_widgets['axes']['sketch_zoom'].plot(
-            [np.nan], [np.nan], **highlight_circle_params)[0]
+            [np.nan], [np.nan], **self.HIGHLIGHT_CIRCLE_PARAMS)[0]
 
     def fill_controls(self):
         # Fill non-graphic controls
@@ -168,7 +175,7 @@ class SketchDock(QDockWidget):
     def connect_canvas(self):
         self.graph_widgets['canvas']['sketch'].mpl_connect('button_press_event', self.sketch_click)
 
-    def connect_label_buttons(self, controls_cfg:dict):
+    def connect_label_buttons(self, controls_cfg: dict):
         ll = self.list_labels
         if controls_cfg['buttons']['next_label']:
             self.widgets['buttons']['next_label'].setEnabled(True)
@@ -178,9 +185,10 @@ class SketchDock(QDockWidget):
         if controls_cfg['buttons']['previous_label']:
             self.widgets['buttons']['previous_label'].setEnabled(True)
             self.widgets['buttons']['previous_label'].clicked.connect(lambda:
-                                                                      ll.setCurrentRow((ll.currentRow() - 1) % ll.count()))
+                                                                      ll.setCurrentRow(
+                                                                          (ll.currentRow() - 1) % ll.count()))
 
-    def update_sketch(self, current_label_name=None):
+    def update_sketch(self, current_label_name: str = None):
         # Updates labels on the sketch
         sketch_labels = self.get_sketch_labels()
 
@@ -207,14 +215,16 @@ class SketchDock(QDockWidget):
         self.sketch_zoom_dy = np.max(np.shape(sketch)) * self.sketch_zoom_scale
 
     def get_sketch_image(self):
-        if self.sketches_loaded:
-            return self.sketches[self.current_sketch_idx]['sketch'].astype(np.uint8)
-        return None
+        if not self.sketches_loaded:
+            logger.log(logging.WARNING, "Attempted to get sketch image when no sketches are loaded")
+            return None
+        return self.sketches[self.current_sketch_idx]['sketch'].astype(np.uint8)
 
     def get_sketch_labels(self):
-        if self.sketches_loaded:
-            return self.sketches[self.current_sketch_idx]['sketch_label_locations']
-        return None
+        if not self.sketches_loaded:
+            logger.log(logging.WARNING, "Attempted to get sketch labels when no sketches are loaded")
+            return None
+        return self.sketches[self.current_sketch_idx]['sketch_label_locations']
 
     def get_sketch_label_coordinates(self):
         return np.array(list(self.get_sketch_labels().values()), dtype=np.float64)

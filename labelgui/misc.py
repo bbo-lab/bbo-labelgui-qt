@@ -11,11 +11,13 @@ def save_cfg(save_path: Path, cfg):
     with open(save_path, "w") as yml_file:
         yaml.dump(cfg, yml_file, default_flow_style=False, sort_keys=False)
 
+
 def load_cfg(file_config: Path):
     if file_config.as_posix().endswith('yml'):
         return yaml_load(file_config)
     else:
         return read_cfg_from_py(file_config)
+
 
 def archive_cfg(cfg, target_dir: Path):
     if isinstance(cfg, Path):
@@ -39,7 +41,8 @@ def read_video_meta(reader):
 
     return header
 
-def read_cfg_from_py(path:Path, save_yml=False):
+
+def read_cfg_from_py(path: Path, save_yml=False):
     assert path.as_posix().endswith(".py"), "Invalid file format"
     with open(path.as_posix(), 'r') as cfg_file:
         config_txt = cfg_file.read()
@@ -58,13 +61,14 @@ def read_cfg_from_py(path:Path, save_yml=False):
             # file: Either provide file with frame times or 'fps'
             "fps": 1,
             "offset": 0.0,
-          }
+        }
             for i_rec, _ in enumerate(cfg_old['standardRecordingFileNames'])
         },
 
         # LABELS
-        "load_labels_file": None,# str: Give path to file or takes labels from canonical path
-        "reference_labels_file": False,  # bool or str: If True, takes ref labels from the canonical path. Or specify path to file
+        "load_labels_file": None,  # str: Give path to file or takes labels from canonical path
+        "reference_labels_file": False,
+        # bool or str: If True, takes ref labels from the canonical path. Or specify path to file
 
         # DATA SELECTION
         "allowed_cams": cfg_old['allowed_cams'],
@@ -83,23 +87,23 @@ def read_cfg_from_py(path:Path, save_yml=False):
 
         # ACTIVATE/DEACTIVATE CONTROLS
         "controls": {
-          "buttons": {
-            # general
-            "save_labels": cfg_old['button_saveLabels'],
-            "single_label_mode": True,
-            "zoom_out": cfg_old['button_home'],
-            # labels
-            "previous_label": cfg_old['button_previousLabel'],
-            "next_label": cfg_old['button_nextLabel'],
-            # Recordings
-            "next_time": cfg_old['button_next'],
-            "previous_time": cfg_old['button_previous'],
-          },
-          "fields": {
-            "current_time": cfg_old['field_currentPose'],
-            "d_time": cfg_old['field_dFrame']
-          }
+            "buttons": {
+                # general
+                "save_labels": cfg_old['button_saveLabels'],
+                "single_label_mode": True,
+                "zoom_out": cfg_old['button_home'],
+                # labels
+                "previous_label": cfg_old['button_previousLabel'],
+                "next_label": cfg_old['button_nextLabel'],
+                # Recordings
+                "next_time": cfg_old['button_next'],
+                "previous_time": cfg_old['button_previous'],
+            },
+            "fields": {
+                "current_time": cfg_old['field_currentPose'],
+                "d_time": cfg_old['field_dFrame']
+            }
         }
     }
 
-    return  cfg_dict
+    return cfg_dict

@@ -67,4 +67,3 @@ class ControlsDock(QDockWidget):
         if button_key is None:
             button_key = button_text
         self.widgets['buttons'][button_key] = button_widget
-

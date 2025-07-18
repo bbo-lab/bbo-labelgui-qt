@@ -4,7 +4,6 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import QApplication, QMdiSubWindow, QLabel, QSpinBox, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox
-from build.lib.bbo.label_lib import update
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,7 @@ class ViewerSubWindow(QMdiSubWindow):
         'ref_label': {'symbol': 'x', 'symbolBrush': 'red', 'symbolSize': 6, 'symbolPen': None},
 
         'current_label': {'symbolBrush': 'darkgreen', 'symbolSize': 8},
-        'error_line': {'color':'red', 'width':2}
+        'error_line': {'color': 'red', 'width': 2}
     }
 
     def __init__(self, index: int, reader, parent=None, img_item=None):
@@ -95,6 +94,22 @@ class ViewerSubWindow(QMdiSubWindow):
             self.img_item.setImage(img, levels=levels)
 
     def draw_label(self, x: float, y: float, label_name: str, label_type='label', current_label=False):
+        """
+           Draw a label on the plot widget at the specified coordinates.
+
+           This method adds a label to the plot widget at the given (x, y) coordinates. If the label already exists,
+           it updates its position. Optionally, the label can be marked as the current label.
+
+           Args:
+               x (float): The x-coordinate of the label.
+               y (float): The y-coordinate of the label.
+               label_name (str): The name of the label.
+               label_type (str, optional): The type of the label (default is 'label').
+               current_label (bool, optional): Whether to mark this label as the current label (default is False).
+
+           Returns:
+               None
+        """
         if label_name not in self.labels[label_type]:
             label_params = self.plot_params[label_type].copy()
             self.labels[label_type][label_name] = self.plot_wget.plot([x], [y], **label_params)
@@ -113,6 +128,20 @@ class ViewerSubWindow(QMdiSubWindow):
             self.labels[line_type][line_name] = self.plot_wget.plot(xs, ys, pen=line_pen)
 
     def mouse_clicked(self, event):
+        """
+       Handle mouse click events on the plot widget.
+
+        This method processes mouse click events on the plot widget, determining the type of action
+        (e.g., create, select, or delete a label) based on the mouse button and keyboard modifiers used.
+        It emits a signal with the coordinates of the click, the current frame index, the sub-window index,
+        and the determined action string.
+
+        Args:
+            event: The mouse click event.
+
+        Returns:
+            None
+        """
         if self.frame_idx is None:
             return
 
@@ -144,6 +173,11 @@ class ViewerSubWindow(QMdiSubWindow):
             logger.log(logging.DEBUG, f"Clicked on sub-window {self.index} at {mouse_point.x()}, {mouse_point.y()}")
 
     def set_current_label(self, label_name: str or None):
+        """
+        Update the given label as current label, and demote the old current label
+        :param label_name: keyword
+        :return: None
+        """
         for label_type in ['label', 'guess_label']:
             # Change the status of the old 'current_label'
             if self.current_label_name in self.labels[label_type]:
@@ -192,6 +226,4 @@ class ViewerSubWindow(QMdiSubWindow):
     def clear_all_labels(self):
         self.plot_wget.clearPlots()
         self.labels = {label_key: {} for label_key in self.plot_params}
-
-    def close(self):
-        pass
+        self.current_label_name = None
