@@ -9,7 +9,7 @@ description = "GUI for guided data labeling"
 readme = "README.md"
 license = "LGPL-3.0-or-later"
 authors = [
-    { name = "BBO-lab @ caesar", email = "abhilash.cheekoti@mpinb.mpg.de" },
+    { name = "BBO-lab @ caesar", email = "kay-michael.voit@mpinb.mpg.de" },
 ]
 classifiers = [
     "License :: OSI Approved :: GNU Lesser General Public License v2 or later (LGPLv2+)",
