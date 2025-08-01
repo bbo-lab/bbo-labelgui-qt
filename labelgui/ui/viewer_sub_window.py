@@ -86,10 +86,14 @@ class ViewerSubWindow(QMdiSubWindow):
 
         if self.img_item is None:
             img_y, img_x = img.shape[:2]
-            self.img_item = pg.ImageItem(img, axisOrder='row-major', levels=levels)
+            max_size = max(img.shape[:2])
+            self.img_item = pg.ImageItem(img, axisOrder='row-major', autoLevels=True)
             self.plot_wget.addItem(self.img_item)
-            self.plot_wget.setLimits(xMin=0, yMin=0,
-                                     xMax=img_x, yMax=img_y)
+            self.plot_wget.setAspectLocked(True)
+            self.plot_wget.setLimits(xMin= (img_x - max_size) / 2,
+                                     xMax= (img_x + max_size) / 2,
+                                     yMin= (img_y - max_size) / 2,
+                                     yMax= (img_y + max_size) / 2)
         else:
             self.img_item.setImage(img, levels=levels)
 

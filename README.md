@@ -1,20 +1,8 @@
 # BBO-labelgui-qt
 GUI for guided data labeling
 
-## Installation
-(You do not need to clone this repository.)
-1. [Install Anaconda](https://docs.anaconda.com/anaconda/install/)
-2. Start Anaconda Prompt (Windows) / terminal (linux) and navigate into repository directory
-3. Create conda environment `conda env create -f https://raw.githubusercontent.com/bbo-lab/bbo-labelgui-qt/main/environment.yml`
-
 ## Running
-1. Start Anaconda Prompt (Windows) / terminal (linux) and navigate into repository directory
-2. Switch to environment `conda activate bbo_labelgui_qt`
-3. Run with `python -m labelgui [options ...]`
-
-## Update 
-1. Start Anaconda Prompt (Windows) / terminal (linux) and navigate into repository directory
-2. Update with `conda env update -f https://raw.githubusercontent.com/bbo-lab/bbo-labelgui-qt/master/environment.yml --prune`.
+1. Run with `python -m labelgui [options ...]`
 
 ## Options
 ### Labeling mode
@@ -34,10 +22,11 @@ and where it saves. This expects the following file structure:
 ```
 user1, user2,... will be presented in a selection dialog on startup. Currently, the jobs can be in .yml format or .py format.
 The .py format is to be deprecated in the future.
+#### Output
 Marking results will be placed in `[base data directory]/users/`
 
 ### Others
-`--help` shows all available options.
+To manipulate i.e. merge, add labels files, see `--help` for available options. 
 
 ## Compiling to exe
 1. `conda activate bbo_labelgui_qt`.

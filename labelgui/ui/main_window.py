@@ -102,8 +102,6 @@ class MainWindow(QMainWindow):
         self.gui_loaded = True
         self.mqtt_connect()
 
-        # TODO: ignoring calibration for now, will implement later if necessary
-
     # Init functions
     def init_files_folders(self):
         recording_folder = Path(self.cfg['recording_folder'])
@@ -524,6 +522,7 @@ class MainWindow(QMainWindow):
     def get_valid_time(self, input_time: float):
         """
             Returns a valid time that is closest to the given 'time'
+            # TODO: add more documentation or make it better
         """
         times_arr = np.asarray(self.times)
         current_time_idx = self.times.index(self.current_time)
@@ -604,7 +603,7 @@ class MainWindow(QMainWindow):
                 if label in self.dock_sketch.get_sketch_labels():
                     label = list(self.dock_sketch.get_sketch_labels().keys()).index(label)
                 else:
-                    logger.log(logging.WARNING, f"Label name {label} not in the sketch!")
+                    logger.log(logging.WARNING, f"Label name {label} not in the current sketch!")
                     return
             case _:
                 logger.log(logging.WARNING, f"Input {label} has unknown type")
@@ -632,6 +631,15 @@ class MainWindow(QMainWindow):
         frame_dict['coords'][cam_idx] = coords
 
     def save_labels(self, file: Path = None):
+        """
+        Save the current labels to a specified file.
+
+        Args:
+            file (Path, optional): The file path where the labels should be saved.
+                                   If not provided, the default path 'labels.yml'
+                                   in the labels folder will be used.
+
+        """
         if file is None:
             file = self.labels_folder / 'labels.yml'
 
