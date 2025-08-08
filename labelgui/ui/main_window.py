@@ -69,7 +69,7 @@ class MainWindow(QMainWindow):
         self.dock_sketch.sketch_zoom_scale = self.cfg.get('sketch_zoom_scale', 0.1)
 
         # Files
-        self.dataset_name = self.cfg['dataset_name'] if len(self.cfg['dataset_name']) \
+        self.dataset_name = self.cfg['dataset_name'] if self.cfg['dataset_name'] \
             else Path(self.cfg['recording_folder']).name
         self.labels_folder = None  # Output folder to store labels/results
 
@@ -224,7 +224,7 @@ class MainWindow(QMainWindow):
         # folder structure
         userfolder = self.drive / 'user' / self.user
         os.makedirs(userfolder, exist_ok=True)
-        results_folder = userfolder / recording_folder.name
+        results_folder = userfolder / self.dataset_name
         os.makedirs(results_folder, exist_ok=True)
         self.labels_folder = results_folder.expanduser().resolve()
 

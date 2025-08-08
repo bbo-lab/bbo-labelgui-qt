@@ -193,7 +193,7 @@ class SketchDock(QDockWidget):
         sketch_labels = self.get_sketch_labels()
 
         if current_label_name:
-            (x, y) = sketch_labels[current_label_name].astype(np.float32)
+            (x, y) = np.asarray(sketch_labels[current_label_name], dtype=np.float32)
         else:
             x, y = (np.nan, np.nan)
 

@@ -6,7 +6,7 @@ sketch_files: [
   ]
 
 # VIDEOS
-dataset_name: "bc_20230524_N_2"  # If empty, takes name of recording folder
+dataset_name: "bc_20230524_N_2"  # str or None. If None, takes name of recording folder
 recording_folder: "{storage}/bulk/bird_hellenthal_FrontField/20230522_20230525_FlightWindow/20230524-1300/"
 recording_filenames: [
   "Niqui/front/CADDX000064.MP4",
@@ -22,7 +22,7 @@ video_times:
     offset: 100.0
 
 # LABELS
-load_labels_file: "{projects_repos}/junker-bird/data/labelgui/labels-bc_20230524_N_2.yml" # str: Give path to file or takes labels from canonical path
+load_labels_file: "{projects_repos}/junker-bird/data/labelgui/labels-bc_20230524_N_2.yml" # str or None: Give path to file. If None, takes labels from canonical path
 reference_labels_file: True  # bool or str: If True, takes ref labels from the canonical path. Or specify path to file
 
 # DATA SELECTION
