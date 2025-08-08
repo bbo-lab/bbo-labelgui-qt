@@ -8,6 +8,20 @@ from PyQt5.QtWidgets import QApplication, QMdiSubWindow, QLabel, QSpinBox, QWidg
 logger = logging.getLogger(__name__)
 
 
+class CustomViewBox(pg.ViewBox):
+    mouse_wheel_signal = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.ShiftModifier:
+            self.mouse_wheel_signal.emit(event.delta())
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+
 class ViewerSubWindow(QMdiSubWindow):
     mouse_clicked_signal = pyqtSignal(float, float, int, int, str)
     # Necessary to follow camelCase for keys here, for compatibility with pyqtgraph
@@ -19,6 +33,7 @@ class ViewerSubWindow(QMdiSubWindow):
         'current_label': {'symbolBrush': 'darkgreen', 'symbolSize': 8},
         'error_line': {'color': 'red', 'width': 2}
     }
+
 
     def __init__(self, index: int, reader, parent=None, img_item=None):
 
@@ -36,7 +51,8 @@ class ViewerSubWindow(QMdiSubWindow):
         main_widget = QWidget()
         main_layout = QVBoxLayout(main_widget)
 
-        self.plot_wget = pg.PlotWidget(enableMenu=False)
+        self.view_box = CustomViewBox()
+        self.plot_wget = pg.PlotWidget(enableMenu=False, viewBox=self.view_box)
         self.plot_wget.invertY(True)
         self.plot_wget.showAxes(False)  # frame it with a full set of axes
         self.plot_wget.scene().sigMouseClicked.connect(self.mouse_clicked)

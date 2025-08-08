@@ -316,6 +316,7 @@ class MainWindow(QMainWindow):
         for _, subwin in self.subwindows.items():
             subwin.connect_controls()
             subwin.mouse_clicked_signal.connect(self.viewer_click)
+            subwin.view_box.mouse_wheel_signal.connect(self.viewer_wheel_event)
 
     # Viewer functions
     def viewer_change_frame(self):
@@ -687,18 +688,23 @@ class MainWindow(QMainWindow):
         for _, subwin in self.subwindows.items():
             subwin.set_current_label(label_name=self.get_current_label())
 
-    def goto_next_time(self):
-        self.set_time(self.get_valid_time(self.current_time + self.d_time))
+    def move_num_timepoints(self, num: int):
+        self.set_time(self.get_valid_time(self.current_time + num * self.d_time))
         self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
 
+    def goto_next_time(self):
+        self.move_num_timepoints(1)
+
     def goto_previous_time(self):
-        self.set_time(self.get_valid_time(self.current_time - self.d_time))
-        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
+        self.move_num_timepoints(-1)
 
     def field_current_time_changed(self):
         new_time = float(self.dock_controls.widgets['fields']['current_time'].text())
         self.set_time(self.get_valid_time(new_time))
         self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
+
+    def viewer_wheel_event(self, delta:int):
+        self.move_num_timepoints(num=int(round(delta / 120)))
 
     # Shortcuts
     def keyPressEvent(self, event):
