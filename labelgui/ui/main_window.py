@@ -115,7 +115,6 @@ class MainWindow(QMainWindow):
         # create folder structure / save backup / load last frame
         self.init_assistant_folders(recording_folder)
         self.init_autosave()
-        labelgui_misc.archive_cfg(self.file_config, self.labels_folder)
         self.restore_last_frame_time()
 
     def load_cfg(self):
@@ -149,6 +148,10 @@ class MainWindow(QMainWindow):
             logger.log(logging.INFO, f'Loading labels from: {labels_file}')
             self.labels = label_lib.load(labels_file, v0_format=False)
             self.labels_loaded = True
+
+            # Backing up the labels file after reading/loading it. Correct loading -> file 'healthy' -> back it up
+            backup_folder = self.labels_folder / 'backup'
+            labelgui_misc.copy_file(labels_file, backup_folder)
         else:
             logger.log(logging.WARNING, f'Autoloading failed. Labels file {labels_file} does not exist.')
 
@@ -228,27 +231,19 @@ class MainWindow(QMainWindow):
         os.makedirs(results_folder, exist_ok=True)
         self.labels_folder = results_folder.expanduser().resolve()
 
-        # backup
-        # TODO: Something is wrong here, check with Kay about what are the files needed to be saved and where
+        # The configuration and labels will be saved in the Backup folder on starting the GUI.
         backup_folder = self.labels_folder / 'backup'
         if not backup_folder.is_dir():
             os.mkdir(backup_folder)
-        file = self.labels_folder / 'labelgui_cfg.yml'
-        if file.is_file():
-            labelgui_misc.archive_cfg(file, backup_folder)
-        file = self.labels_folder / 'labels.yml'
-        try:
-            labels_old = label_lib.load(file, v0_format=False)
-            label_lib.save(backup_folder / 'labels.yml', labels_old)
-        except FileNotFoundError as e:
-            pass
+        labelgui_misc.archive_cfg(self.file_config, backup_folder)
 
     def init_autosave(self):
-        # autosave
+        """Autosave folder to save labels (with lower frequency/ less often).
+        See config file for frequency information"""
+
         autosave_folder = self.labels_folder / 'autosave'
         if not autosave_folder.is_dir():
             os.makedirs(autosave_folder)
-        labelgui_misc.archive_cfg(self.file_config, autosave_folder)
 
     # Init gui functions
     def init_viewer(self):
@@ -573,6 +568,7 @@ class MainWindow(QMainWindow):
 
     def set_d_time(self):
         self.d_time = float(self.dock_controls.widgets['fields']['d_time'].text())
+        self.dock_controls.widgets['fields']['d_time'].clearFocus()
 
     def set_docks_layout(self):
         # Right dock area
@@ -702,6 +698,7 @@ class MainWindow(QMainWindow):
         new_time = float(self.dock_controls.widgets['fields']['current_time'].text())
         self.set_time(self.get_valid_time(new_time))
         self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
+        self.dock_controls.widgets['fields']['current_time'].clearFocus()
 
     def viewer_wheel_event(self, delta:int):
         self.move_num_timepoints(num=int(round(delta / 120)))
@@ -725,6 +722,9 @@ class MainWindow(QMainWindow):
                 self.dock_sketch.widgets['buttons']['previous_label'].click()
 
     def closeEvent(self, event):
+        if self.cfg['exit_save_labels']:
+            self.save_labels()
+
         exit_status = {'i_time': self.current_time}
         np.save(self.labels_folder / 'exit_status.npy', exit_status)
 

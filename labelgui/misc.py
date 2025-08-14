@@ -27,6 +27,10 @@ def archive_cfg(cfg, target_dir: Path):
     save_cfg(target_dir / "labelgui_cfg_processed.yml", cfg)
 
 
+def copy_file(file_path: Path, target_dir: Path):
+    shutil.copy(file_path, target_dir.as_posix())
+
+
 def read_video_meta(reader):
     header = reader.get_meta_data()
 

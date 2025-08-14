@@ -12,11 +12,13 @@ and where it saves. This expects the following file structure:
 ```
 [base data directory]/
 ├── data/
-│   └── users/
+│   └── user/
 │       ├── user1/
-│       │   └── labelgui_cfg.yml
+│       │   └── jobs
+│       │       └── labelgui_cfg.yml
 │       ├── user2/
-│       │   └── labelgui_cfg.yml
+│       │   └── jobs
+│       │       └── labelgui_cfg.yml
 │       └── ...
 └── users/
 ```
