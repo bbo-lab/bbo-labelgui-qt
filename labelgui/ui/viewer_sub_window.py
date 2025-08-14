@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 class CustomViewBox(pg.ViewBox):
     mouse_wheel_signal = pyqtSignal(int)
 
-    def __init__(self, parent=None):
-        super().__init__(parent=parent)
+    def __init__(self, parent=None, *args, **kwargs):
+        super().__init__(parent=parent, *args, **kwargs)
 
     def wheelEvent(self, event):
         if event.modifiers() & Qt.ShiftModifier:
@@ -51,8 +51,8 @@ class ViewerSubWindow(QMdiSubWindow):
         main_widget = QWidget()
         main_layout = QVBoxLayout(main_widget)
 
-        self.view_box = CustomViewBox()
-        self.plot_wget = pg.PlotWidget(enableMenu=False, viewBox=self.view_box)
+        self.view_box = CustomViewBox(enableMenu=False)
+        self.plot_wget = pg.PlotWidget(viewBox=self.view_box)
         self.plot_wget.invertY(True)
         self.plot_wget.showAxes(False)  # frame it with a full set of axes
         self.plot_wget.scene().sigMouseClicked.connect(self.mouse_clicked)
