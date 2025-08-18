@@ -315,6 +315,7 @@ class MainWindow(QMainWindow):
 
     # Viewer functions
     def viewer_change_frame(self):
+        self.trigger_autosave_event()
         self.viewer_clear_labels()
 
         self.viewer_update_images()
@@ -408,14 +409,17 @@ class MainWindow(QMainWindow):
                         subwin.draw_line(*line_coords.T, line_name=label_name, line_type='error_line')
 
     def viewer_click(self, x: float, y: float, cam_frame_idx: int, cam_idx: int, action: str = 'create_label'):
-        # Initialize array
-        label_name = self.get_current_label()
+        current_label_name = self.get_current_label()
 
         match action:
             case 'select_label':
                 coords = np.array([x, y], dtype=np.float64)
                 point_dists = []
                 frame_labels = label_lib.get_labels_from_frame(self.labels, frame_idx=cam_frame_idx)
+                frame_guess_labels = self.subwindows[cam_idx].get_labels('guess_label')
+                if not len(frame_labels) and not len(frame_guess_labels):
+                    return
+
                 label_names = list(frame_labels.keys())
                 for ln, ld in frame_labels.items():
                     if len(ld) > cam_idx and not np.any(np.isnan(ld[cam_idx])):
@@ -424,11 +428,18 @@ class MainWindow(QMainWindow):
                     else:
                         point_dists.append(np.inf)
 
+                for gln, gld in frame_guess_labels.items():
+                    if gln not in label_names:
+                        label_names.append(gln)
+                        point_dists.append(np.inf)
+
+                    point_dists[label_names.index(gln)] = np.linalg.norm(np.hstack(gld) - coords)
+
                 self.set_current_label(label_names[np.argmin(point_dists)])
 
             case 'create_label':
-                self.add_label([x, y], label_name, cam_frame_idx, cam_idx)
-                self.viewer_plot_labels(label_names=[label_name])
+                self.add_label([x, y], current_label_name, cam_frame_idx, cam_idx)
+                self.viewer_plot_labels(label_names=[current_label_name])
                 if self.dock_controls.widgets['buttons']['single_label_mode'].isChecked():
                     self.goto_next_time()
 
@@ -440,7 +451,7 @@ class MainWindow(QMainWindow):
                 if self.user not in self.labels['labeler_list']:
                     self.labels['labeler_list'].append(self.user)
 
-                label_dict = self.labels['labels'].get(label_name, {})
+                label_dict = self.labels['labels'].get(current_label_name, {})
                 # Only delete the label if it already exists
                 if (cam_frame_idx in label_dict and
                         not np.any(np.isnan(label_dict[cam_frame_idx]['coords'][cam_idx, :]))):
@@ -449,7 +460,7 @@ class MainWindow(QMainWindow):
                     label_dict[cam_frame_idx]['point_times'][cam_idx] = time.time()
                     label_dict[cam_frame_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
 
-                    self.subwindows[cam_idx].clear_label(label_name=label_name,
+                    self.subwindows[cam_idx].clear_label(label_name=current_label_name,
                                                          label_type='label')
 
             case _:
@@ -517,16 +528,12 @@ class MainWindow(QMainWindow):
 
     def get_valid_time(self, input_time: float):
         """
-            Returns a valid time that is closest to the given 'time'
+            Returns a valid time that is closest to the given 'input_time'
             # TODO: add more documentation or make it better
         """
         times_arr = np.asarray(self.times)
         current_time_idx = self.times.index(self.current_time)
-        # Asserting that the change in time should be more than self.d_time
-        diff_time = np.abs(self.current_time - input_time)
         diff_sign = int(np.sign(input_time - self.current_time))
-        if diff_time < self.d_time:
-            input_time = self.current_time + (diff_sign * self.d_time)
 
         if diff_sign > 0:
             search_slice = times_arr[current_time_idx:]
@@ -547,15 +554,15 @@ class MainWindow(QMainWindow):
             return None
 
     # Setter functions
-    def set_time(self, input_time: float, mqtt_publish=True):
-        if input_time not in self.times:
+    def set_time(self, valid_input_time: float, mqtt_publish=True):
+        if valid_input_time not in self.times:
             return
 
-        self.current_time = input_time
+        self.current_time = valid_input_time
 
         for cam_idx, subwin in self.subwindows.items():
-            if input_time in self.cam_times[cam_idx]:
-                subwin.frame_idx = self.cam_times[cam_idx].index(input_time)
+            if valid_input_time in self.cam_times[cam_idx]:
+                subwin.frame_idx = self.cam_times[cam_idx].index(valid_input_time)
             else:
                 subwin.frame_idx = None
                 subwin.label_labeler.setText("")

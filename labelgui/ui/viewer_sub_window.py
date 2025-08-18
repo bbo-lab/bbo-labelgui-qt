@@ -146,6 +146,34 @@ class ViewerSubWindow(QMdiSubWindow):
             line_params = self.plot_params[line_type].copy()
             line_pen = pg.mkPen(**line_params)
             self.labels[line_type][line_name] = self.plot_wget.plot(xs, ys, pen=line_pen)
+        else:
+            self.labels[line_type][line_name].setData(xs, ys)
+
+    def set_current_label(self, label_name: str or None):
+        """
+        Update the given label as current label, and demote the old current label
+        :param label_name: keyword
+        :return: None
+        """
+        for label_type in ['label', 'guess_label']:
+            # Change the status of the old 'current_label'
+            if self.current_label_name in self.labels[label_type]:
+                params = self.plot_params[label_type].copy()
+                self.labels[label_type][self.current_label_name].setSymbolBrush(params['symbolBrush'])
+                self.labels[label_type][self.current_label_name].setSymbolSize(params['symbolSize'])
+            # Set new 'current_label'
+            if label_name in self.labels[label_type]:
+                params = self.plot_params['current_label'].copy()
+                self.labels[label_type][label_name].setSymbolBrush(params['symbolBrush'])
+                self.labels[label_type][label_name].setSymbolSize(params['symbolSize'])
+
+        self.current_label_name = label_name
+
+    def get_labels(self, label_type: str='guess_label'):
+        labels_out = {}
+        for label_name, label in self.labels[label_type].items():
+            labels_out[label_name] = label.getData()
+        return labels_out
 
     def mouse_clicked(self, event):
         """
@@ -191,26 +219,6 @@ class ViewerSubWindow(QMdiSubWindow):
             self.mouse_clicked_signal.emit(mouse_point.x(), mouse_point.y(),
                                            self.frame_idx, self.index, action_str)
             logger.log(logging.DEBUG, f"Clicked on sub-window {self.index} at {mouse_point.x()}, {mouse_point.y()}")
-
-    def set_current_label(self, label_name: str or None):
-        """
-        Update the given label as current label, and demote the old current label
-        :param label_name: keyword
-        :return: None
-        """
-        for label_type in ['label', 'guess_label']:
-            # Change the status of the old 'current_label'
-            if self.current_label_name in self.labels[label_type]:
-                params = self.plot_params[label_type].copy()
-                self.labels[label_type][self.current_label_name].setSymbolBrush(params['symbolBrush'])
-                self.labels[label_type][self.current_label_name].setSymbolSize(params['symbolSize'])
-            # Set new 'current_label'
-            if label_name in self.labels[label_type]:
-                params = self.plot_params['current_label'].copy()
-                self.labels[label_type][label_name].setSymbolBrush(params['symbolBrush'])
-                self.labels[label_type][label_name].setSymbolSize(params['symbolSize'])
-
-        self.current_label_name = label_name
 
     def set_intensity_range(self):
         img_dtype = self.reader.get_data(0).dtype
