@@ -204,6 +204,8 @@ class ViewerSubWindow(QMdiSubWindow):
             if event.button() == 1:
                 if modifiers == Qt.ShiftModifier:
                     action_str = 'select_label'
+                elif modifiers == Qt.ControlModifier:
+                    action_str = 'select_ref_label'
                 elif modifiers == Qt.AltModifier:
                     # TODO:
                     action_str = 'auto_label'

@@ -56,6 +56,11 @@ class MainWindow(QMainWindow):
         self.view_menu.addAction("&Tile", lambda: self.mdi_view_select("tile_view"))
         self.view_menu.addAction("&Cascade", lambda: self.mdi_view_select("cascade_view"))
 
+        self.view_menu.addSection("Reference labels")
+        self.checkbox_disp_ref_annotated = self.view_menu.addAction("&Only Display Annotated", self.viewer_change_frame)
+        self.checkbox_disp_ref_annotated.setCheckable(True)
+        self.checkbox_disp_ref_annotated.setChecked(True)
+
         # Config
         self.load_cfg()
 
@@ -392,21 +397,29 @@ class MainWindow(QMainWindow):
             if frame_idx is None:
                 continue
 
-            for label_name in self.labels['labels']:
-                if label_name in self.ref_labels['labels'] and frame_idx in self.ref_labels['labels'][label_name] and \
-                        not np.any(np.isnan(self.ref_labels['labels'][label_name][frame_idx]['coords'][cam_idx])):
+            display_only_annotated = self.checkbox_disp_ref_annotated.isChecked()
+            ref_label_names = self.ref_labels['labels'].keys()
 
-                    ref_label_dict = self.ref_labels['labels'][label_name]
-                    label_dict = self.labels['labels'][label_name]
+            if display_only_annotated:
+                label_names = label_lib.get_labels_from_frame(self.labels, frame_idx)
+                ref_label_names = list(set(ref_label_names) and set(label_names))
+
+            for ln in ref_label_names:
+                if frame_idx in self.ref_labels['labels'][ln] and \
+                        not np.any(np.isnan(self.ref_labels['labels'][ln][frame_idx]['coords'][cam_idx])):
+
+                    ref_label_dict = self.ref_labels['labels'][ln]
                     point = ref_label_dict[frame_idx]['coords'][cam_idx]
-                    subwin.draw_label(point[0], point[1], label_name, label_type="ref_label")
+                    subwin.draw_label(point[0], point[1], ln, label_type="ref_label")
 
+                    # Draw correspondence line between ref label and annotation
+                    label_dict = self.labels['labels'].get(ln, {})
                     if frame_idx in label_dict and \
                             not np.any(np.isnan(label_dict[frame_idx]['coords'][cam_idx])):
                         line_coords = np.concatenate((label_dict[frame_idx]['coords'][(cam_idx,), :],
                                                       ref_label_dict[frame_idx]['coords'][(cam_idx,), :]), axis=0)
                         logger.log(logging.DEBUG, f"Drawing line, {line_coords.shape}, {line_coords}")
-                        subwin.draw_line(*line_coords.T, line_name=label_name, line_type='error_line')
+                        subwin.draw_line(*line_coords.T, line_name=ln, line_type='error_line')
 
     def viewer_click(self, x: float, y: float, cam_frame_idx: int, cam_idx: int, action: str = 'create_label'):
         current_label_name = self.get_current_label()
@@ -436,6 +449,18 @@ class MainWindow(QMainWindow):
                     point_dists[label_names.index(gln)] = np.linalg.norm(np.hstack(gld) - coords)
 
                 self.set_current_label(label_names[np.argmin(point_dists)])
+
+            case 'select_ref_label':
+                frame_ref_labels = self.subwindows[cam_idx].get_labels(label_type='ref_label')
+                if not len(frame_ref_labels):
+                    return
+
+                coords = np.array([x, y], dtype=np.float64)
+                point_dists = []
+                for rln, rld in frame_ref_labels.items():
+                    point_dists.append(np.linalg.norm(np.hstack(rld) - coords))
+                ref_label_names = list(frame_ref_labels.keys())
+                self.set_current_label(ref_label_names[np.argmin(point_dists)])
 
             case 'create_label':
                 self.add_label([x, y], current_label_name, cam_frame_idx, cam_idx)
