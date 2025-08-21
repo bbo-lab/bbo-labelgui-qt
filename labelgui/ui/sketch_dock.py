@@ -1,12 +1,11 @@
 import logging
-from pathlib import Path
-from typing import List
-
 import numpy as np
 from PyQt5.QtWidgets import (QWidget, QDockWidget, QVBoxLayout, QComboBox,
                              QListWidget, QHBoxLayout, QAbstractItemView, QPushButton)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from pathlib import Path
+from typing import List
 
 logger = logging.getLogger(__name__)
 

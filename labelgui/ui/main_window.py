@@ -1,19 +1,18 @@
 import logging
-import os
-import sys
-import time
-from pathlib import Path
-from typing import List, Dict, Optional
-
 import numpy as np
+import os
 import paho.mqtt.client as mqtt
 import pandas as pd
 import svidreader
-from PyQt5.QtCore import Qt
+import sys
+import time
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import QMdiArea, \
     QFileDialog, \
     QMainWindow
 from bbo import label_lib, path_management as bbo_pm
+from pathlib import Path
+from typing import List, Dict, Optional
 
 from labelgui import misc as labelgui_misc
 from labelgui.select_user import SelectUserWindow
@@ -25,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
+    mqtt_message_signal = pyqtSignal(float)
+
     def __init__(self, drive: Path, file_config=None, parent=None, sync: str | bool = False):
         super(MainWindow, self).__init__(parent)
 
@@ -226,7 +227,7 @@ class MainWindow(QMainWindow):
         file_exit_status = self.labels_folder / 'exit_status.npy'
         if file_exit_status.is_file():
             exit_status = np.load(file_exit_status.as_posix(), allow_pickle=True)[()]
-            self.set_time(exit_status.get('i_time', self.times[0]))
+            self.current_time = exit_status.get('i_time', self.times[0])
 
     def init_assistant_folders(self, recording_folder: Path):
         # folder structure
@@ -264,7 +265,7 @@ class MainWindow(QMainWindow):
                 self.subwindows[cam_idx] = window
 
         self.mdi.setViewMode(QMdiArea.TabbedView)
-        self.set_time(self.current_time)
+        self.set_time(self.current_time, time_field_update=False)
 
     def fill_controls(self):
         # Sketches dock
@@ -318,6 +319,9 @@ class MainWindow(QMainWindow):
             subwin.mouse_clicked_signal.connect(self.viewer_click)
             subwin.view_box.mouse_wheel_signal.connect(self.viewer_wheel_event)
 
+        # mqtt
+        self.mqtt_message_signal.connect(self.set_time)
+
     # Viewer functions
     def viewer_change_frame(self):
         self.trigger_autosave_event()
@@ -339,6 +343,7 @@ class MainWindow(QMainWindow):
 
         for cam_idx, subwin in self.subwindows.items():
             frame_idx = subwin.frame_idx
+            logger.log(logging.INFO, "<" * 10 + f" CAM: {cam_idx} > FRAME: {frame_idx} " + ">" * 10)
             if frame_idx is None:
                 subwin.clear_all_labels()
                 subwin.label_labeler.setText("")
@@ -516,21 +521,23 @@ class MainWindow(QMainWindow):
             self.mqtt_client = None
 
     def mqtt_publish(self):
+        # TODO: implement this function if necessary
         if self.mqtt_client is not None:
             try:
-                self.mqtt_client.publish(self.sync, payload=str(self.frame_idx))
+                self.mqtt_client.publish(self.sync, payload="Not implemented yet")
             except ConnectionRefusedError:
                 logger.log(logging.ERROR, "No connection to MQTT server.")
                 self.mqtt_client = None
 
-    def mqtt_on_message(self, message):
+    def mqtt_on_message(self, client, userdata, message):
         # TODO: Test this function
         logger.log(logging.INFO, f"Received message '{message.payload.decode()}' on topic '{message.topic}'")
         match message.topic:
             case "bbo/sync/fr_idx":
                 fr_idx = int(message.payload.decode())
-                cam_idx = 0 # TODO: This needs to be changed when to support multiple cams
-                self.set_time(self.cam_times[cam_idx][fr_idx], mqtt_publish=False)
+                cam_idx = 0  # TODO: This needs to be changed when to support multiple cams
+                # Intermediate signal is implemented to avoid issues with Qt components, since Qt components are not thread safe.
+                self.mqtt_message_signal.emit(self.cam_times[cam_idx][fr_idx])
 
     # Getter functions
     def get_current_time(self):
@@ -579,7 +586,7 @@ class MainWindow(QMainWindow):
             return None
 
     # Setter functions
-    def set_time(self, valid_input_time: float, mqtt_publish=True):
+    def set_time(self, valid_input_time: float, mqtt_publish=False, time_field_update=True):
         if valid_input_time not in self.times:
             return
 
@@ -597,6 +604,8 @@ class MainWindow(QMainWindow):
 
         # Viewer
         self.viewer_change_frame()
+        if time_field_update:
+            self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
 
     def set_d_time(self):
         self.d_time = float(self.dock_controls.widgets['fields']['d_time'].text())
@@ -718,7 +727,6 @@ class MainWindow(QMainWindow):
 
     def move_num_timepoints(self, num: int):
         self.set_time(self.get_valid_time(self.current_time + num * self.d_time))
-        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
 
     def goto_next_time(self):
         self.move_num_timepoints(1)
@@ -729,10 +737,9 @@ class MainWindow(QMainWindow):
     def field_current_time_changed(self):
         new_time = float(self.dock_controls.widgets['fields']['current_time'].text())
         self.set_time(self.get_valid_time(new_time))
-        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
-        self.dock_controls.widgets['fields']['current_time'].clearFocus()
+        # self.dock_controls.widgets['fields']['current_time'].clearFocus()
 
-    def viewer_wheel_event(self, delta:int):
+    def viewer_wheel_event(self, delta: int):
         self.move_num_timepoints(num=int(round(delta / 120)))
 
     # Shortcuts

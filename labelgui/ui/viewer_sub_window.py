@@ -34,7 +34,6 @@ class ViewerSubWindow(QMdiSubWindow):
         'error_line': {'color': 'red', 'width': 2}
     }
 
-
     def __init__(self, index: int, reader, parent=None, img_item=None):
 
         super().__init__(parent)
@@ -106,10 +105,10 @@ class ViewerSubWindow(QMdiSubWindow):
             self.img_item = pg.ImageItem(img, axisOrder='row-major', autoLevels=True)
             self.plot_wget.addItem(self.img_item)
             self.plot_wget.setAspectLocked(True)
-            self.plot_wget.setLimits(xMin= (img_x - max_size) / 2,
-                                     xMax= (img_x + max_size) / 2,
-                                     yMin= (img_y - max_size) / 2,
-                                     yMax= (img_y + max_size) / 2)
+            self.plot_wget.setLimits(xMin=(img_x - max_size) / 2,
+                                     xMax=(img_x + max_size) / 2,
+                                     yMin=(img_y - max_size) / 2,
+                                     yMax=(img_y + max_size) / 2)
         else:
             self.img_item.setImage(img, levels=levels)
 
@@ -169,7 +168,7 @@ class ViewerSubWindow(QMdiSubWindow):
 
         self.current_label_name = label_name
 
-    def get_labels(self, label_type: str='guess_label'):
+    def get_labels(self, label_type: str = 'guess_label'):
         labels_out = {}
         for label_name, label in self.labels[label_type].items():
             labels_out[label_name] = label.getData()

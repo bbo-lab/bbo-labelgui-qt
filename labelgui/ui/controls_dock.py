@@ -1,4 +1,4 @@
-from PyQt5.QtGui import QIntValidator
+from PyQt5.QtGui import QDoubleValidator
 from PyQt5.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
                              QPushButton, QDockWidget)
 
@@ -21,11 +21,11 @@ class ControlsDock(QDockWidget):
 
         row = 0
         self.add_label("dTime:", row, 0, "d_time")
-        self.add_field(row, 1, "d_time")
+        self.add_field(row, 1, "d_time", validator=QDoubleValidator())
 
         row += 1
         self.add_label("current time:", row, 0, "current_time")
-        self.add_field(row, 1, "current_time")
+        self.add_field(row, 1, "current_time", validator=QDoubleValidator(decimals=6))
 
         row += 1
         self.add_button("Previous Timepoint (A)", row, 0, "previous_time")
@@ -50,10 +50,12 @@ class ControlsDock(QDockWidget):
             label_key = label_text
         self.widgets['labels'][label_key] = label_widget
 
-    def add_field(self, row_idx: int, col_idx: int, field_key: str, fill_int=False):
+    def add_field(self, row_idx: int, col_idx: int, field_key: str, validator=None):
         field_widget = QLineEdit(self, enabled=False)
-        if fill_int:
-            field_widget.setValidator(QIntValidator())
+
+        if validator is not None:
+            field_widget.setValidator(validator)
+
         self.layout_grid.setColumnStretch(col_idx, 1)
         self.layout_grid.setRowStretch(row_idx, 1)
         self.layout_grid.addWidget(field_widget, row_idx, col_idx, 1, 1)
