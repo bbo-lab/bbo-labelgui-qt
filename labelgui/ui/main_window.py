@@ -103,7 +103,7 @@ class MainWindow(QMainWindow):
         self.set_docks_layout()
         self.showMaximized()
         self.setFocus()
-        self.setWindowTitle('Labeling GUI')
+        self.setWindowTitle(f"Labeling GUI - {self.dataset_name}")
 
         self.gui_loaded = True
         self.mqtt_connect()
@@ -227,7 +227,8 @@ class MainWindow(QMainWindow):
         file_exit_status = self.labels_folder / 'exit_status.npy'
         if file_exit_status.is_file():
             exit_status = np.load(file_exit_status.as_posix(), allow_pickle=True)[()]
-            self.current_time = exit_status.get('i_time', self.times[0])
+            if exit_status.get('i_time', self.times[0]) in self.times:
+                self.current_time = exit_status.get('i_time', self.times[0])
 
     def init_assistant_folders(self, recording_folder: Path):
         # folder structure
@@ -361,7 +362,7 @@ class MainWindow(QMainWindow):
                     # Plot actual/annotated labels
                     point = label_dict[frame_idx]['coords'][cam_idx, :]
                     labeler = self.labels['labeler_list'][label_dict[frame_idx]['labeler'][cam_idx]]
-                    logger.log(logging.INFO, f"label {label_name} {frame_idx} {labeler}: {point}")
+                    logger.log(logging.INFO, f"label\t{label_name}\t{frame_idx}\t{labeler}\t{point}")
                     subwin.draw_label(point[0], point[1], label_name,
                                       current_label=current_label_name == label_name)
                     subwin.clear_label(label_name, label_type='guess_label')
@@ -407,7 +408,7 @@ class MainWindow(QMainWindow):
 
             if display_only_annotated:
                 label_names = label_lib.get_labels_from_frame(self.labels, frame_idx)
-                ref_label_names = list(set(ref_label_names) and set(label_names))
+                ref_label_names = list(set(ref_label_names) & set(label_names))
 
             for ln in ref_label_names:
                 if frame_idx in self.ref_labels['labels'][ln] and \
@@ -492,6 +493,9 @@ class MainWindow(QMainWindow):
 
                     self.subwindows[cam_idx].clear_label(label_name=current_label_name,
                                                          label_type='label')
+
+                if self.dock_controls.widgets['buttons']['single_label_mode'].isChecked():
+                    self.goto_next_time()
 
             case _:
                 logger.log(logging.WARNING, f'Unknown action {action} for cam_idx {cam_idx} '
@@ -597,7 +601,6 @@ class MainWindow(QMainWindow):
                 subwin.frame_idx = self.cam_times[cam_idx].index(valid_input_time)
             else:
                 subwin.frame_idx = None
-                subwin.label_labeler.setText("")
 
             if mqtt_publish:
                 self.mqtt_publish()
@@ -764,8 +767,13 @@ class MainWindow(QMainWindow):
         if self.cfg['exit_save_labels']:
             self.save_labels()
 
-        exit_status = {'i_time': self.current_time}
-        np.save(self.labels_folder / 'exit_status.npy', exit_status)
+        file_exit_status = self.labels_folder / 'exit_status.npy'
+        if file_exit_status.is_file():
+            exit_status = np.load(file_exit_status.as_posix(), allow_pickle=True)[()]
+        else:
+            exit_status = {}
+        exit_status['i_time'] = self.current_time
+        np.save(file_exit_status, exit_status)
 
 
 class UnsupportedFormatException(Exception):
