@@ -296,6 +296,8 @@ class MainWindow(QMainWindow):
             self.dock_controls.widgets['buttons']['zoom_out'].setEnabled(True)
             self.dock_controls.widgets['buttons']['zoom_out'].clicked.connect(
                 self.viewer_zoom_reset)
+        self.dock_controls.widgets['buttons']['rotate'].setEnabled(True)
+        self.dock_controls.widgets['buttons']['rotate'].clicked.connect(self.viewer_rotate)
         self.dock_controls.widgets['buttons']['single_label_mode'].setEnabled(
             controls_cfg['buttons']['single_label_mode'])
 
@@ -501,6 +503,11 @@ class MainWindow(QMainWindow):
                 logger.log(logging.WARNING, f'Unknown action {action} for cam_idx {cam_idx} '
                                             f'and location {x}, {y}')
 
+    def viewer_rotate(self):
+        # Rotate view in all the subwindows
+        for _, subwin in self.subwindows.items():
+            subwin.rotate_view(rot_angle =(subwin.rot_angle + 90) % 360)
+
     def viewer_clear_labels(self):
         for cam_idx, subwin in self.subwindows.items():
             subwin.clear_all_labels()
@@ -508,6 +515,12 @@ class MainWindow(QMainWindow):
     def viewer_zoom_reset(self):
         # Reset view in all the subwindows
         for _, subwin in self.subwindows.items():
+            # Some related pyqtgraph functions are not behaving well, specifically when the window size is
+            # changed/maximized/minimized. So, it is necessary to reset the rotation before resetting the view range.
+            current_angle = subwin.rot_angle
+            subwin.rotate_view(rot_angle=0)
+            subwin.rotate_view(rot_angle=current_angle)
+
             subwin.plot_wget.autoRange()
 
     # Mqtt functions
@@ -525,7 +538,7 @@ class MainWindow(QMainWindow):
             self.mqtt_client = None
 
     def mqtt_publish(self):
-        # TODO: implement this function if necessary
+        # TODO: Test this function
         if self.mqtt_client is not None:
             try:
                 self.mqtt_client.publish(self.sync, payload="Not implemented yet")
@@ -659,7 +672,6 @@ class MainWindow(QMainWindow):
         label_dict = self.labels['labels'].setdefault(label_name, {})
         frame_dict = label_dict.setdefault(fr_idx, {
             'coords': np.full(data_shape, np.nan, dtype=np.float64),
-            # TODO: check with kay about the dtype of times
             'point_times': np.full(data_shape[0], 0, dtype=np.float64),
             'labeler': np.full(data_shape[0], 0, dtype=np.uint16)
         })
@@ -762,6 +774,9 @@ class MainWindow(QMainWindow):
                 self.dock_sketch.widgets['buttons']['next_label'].click()
             elif controls_cfg['buttons']['previous_label'] and event.key() == Qt.Key_P:
                 self.dock_sketch.widgets['buttons']['previous_label'].click()
+            # This button is later added TODO: check with kay
+            elif controls_cfg['buttons'].get('rotate', True) and event.key() == Qt.Key_R:
+                self.dock_controls.widgets['buttons']['rotate'].click()
 
     def closeEvent(self, event):
         if self.cfg['exit_save_labels']:

@@ -33,11 +33,12 @@ class ControlsDock(QDockWidget):
 
         row += 1
         self.add_button("Save Labels (S)", row, 0, "save_labels")
-        self.add_button("Zoom Out (O)", row, 1, "zoom_out")
+        self.add_button("Single Label Mode", row, 1, "single_label_mode")
+        self.widgets['buttons']['single_label_mode'].setCheckable(True)
 
         row += 1
-        self.add_button("Single Label Mode", row, 0, "single_label_mode")
-        self.widgets['buttons']['single_label_mode'].setCheckable(True)
+        self.add_button("Rotate (R)", row, 0, "rotate")
+        self.add_button("Zoom Out (O)", row, 1, "zoom_out")
 
         self.setWidget(main_widget)
 

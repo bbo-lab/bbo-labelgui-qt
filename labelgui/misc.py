@@ -46,7 +46,7 @@ def read_video_meta(reader):
     return header
 
 
-def read_cfg_from_py(path: Path, save_yml=False):
+def read_cfg_from_py(path: Path, saveas_yml: Path | None = None):
     assert path.as_posix().endswith(".py"), "Invalid file format"
     with open(path.as_posix(), 'r') as cfg_file:
         config_txt = cfg_file.read()
@@ -96,6 +96,7 @@ def read_cfg_from_py(path: Path, save_yml=False):
                 "save_labels": cfg_old['button_saveLabels'],
                 "single_label_mode": True,
                 "zoom_out": cfg_old['button_home'],
+                "rotate": True,
                 # labels
                 "previous_label": cfg_old['button_previousLabel'],
                 "next_label": cfg_old['button_nextLabel'],
@@ -109,5 +110,9 @@ def read_cfg_from_py(path: Path, save_yml=False):
             }
         }
     }
+
+    if saveas_yml is not None:
+        with open(saveas_yml.as_posix(), 'w') as yml_file:
+            yaml.dump(cfg_dict, yml_file, default_flow_style=False, sort_keys=False)
 
     return cfg_dict

@@ -43,6 +43,7 @@ class ViewerSubWindow(QMdiSubWindow):
         self.index = index
         self.reader = reader
         self.img_item = img_item
+        self.rot_angle = 0.0  # Clockwise angle in degrees
         self.frame_idx = None
         self.labels = {label_key: {} for label_key in self.plot_params}
         self.current_label_name = None
@@ -53,7 +54,7 @@ class ViewerSubWindow(QMdiSubWindow):
         self.view_box = CustomViewBox(enableMenu=False)
         self.plot_wget = pg.PlotWidget(viewBox=self.view_box)
         self.plot_wget.invertY(True)
-        self.plot_wget.showAxes(False)  # frame it with a full set of axes
+        self.plot_wget.showAxes(False)  # whether to frame it with a full set of axes
         self.plot_wget.scene().sigMouseClicked.connect(self.mouse_clicked)
         main_layout.addWidget(self.plot_wget)
 
@@ -93,24 +94,35 @@ class ViewerSubWindow(QMdiSubWindow):
             return
 
         img = self.reader.get_data(self.frame_idx).copy()
-        adjust_level = self.checkbox_adjust_level.isChecked()
         levels = [self.box_vmin.value(), self.box_vmax.value()]
         img = np.clip(img, *levels)
+
+        adjust_level = self.checkbox_adjust_level.isChecked()
         if not adjust_level:
             levels = [self.box_vmin.minimum(), self.box_vmax.maximum()]
 
         if self.img_item is None:
-            img_y, img_x = img.shape[:2]
-            max_size = max(img.shape[:2])
             self.img_item = pg.ImageItem(img, axisOrder='row-major', autoLevels=True)
             self.plot_wget.addItem(self.img_item)
             self.plot_wget.setAspectLocked(True)
+
+            img_y, img_x = img.shape[:2]  # np.rot90(img, k = self.rotate // 90).shape[:2]
+            max_size = max(img.shape[:2])
             self.plot_wget.setLimits(xMin=(img_x - max_size) / 2,
                                      xMax=(img_x + max_size) / 2,
                                      yMin=(img_y - max_size) / 2,
                                      yMax=(img_y + max_size) / 2)
+
         else:
             self.img_item.setImage(img, levels=levels)
+
+    def rotate_view(self, rot_angle: None | float = None):
+        if rot_angle is not None:
+            self.rot_angle = rot_angle % 360
+
+        local_center = self.view_box.boundingRect().center()
+        self.view_box.setTransformOriginPoint(local_center)
+        self.view_box.setRotation(self.rot_angle)
 
     def draw_label(self, x: float, y: float, label_name: str, label_type='label', current_label=False):
         """
@@ -192,12 +204,11 @@ class ViewerSubWindow(QMdiSubWindow):
         if self.frame_idx is None:
             return
 
-        vb = self.plot_wget.plotItem.vb
         scene_coords = event.scenePos()
         modifiers = QApplication.keyboardModifiers()
 
         if self.plot_wget.sceneBoundingRect().contains(scene_coords):
-            mouse_point = vb.mapSceneToView(scene_coords)
+            mouse_point = self.view_box.mapSceneToView(scene_coords)
 
             # Left click
             if event.button() == 1:
