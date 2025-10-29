@@ -24,9 +24,8 @@ def main():
                              "where each labels file stands for a separate camera. 'None' serves as a placeholder.")
     parser.add_argument('--yml_only', required=False, action="store_true",
                         help="Switches between master mode and worker mode")
-    # TODO: work on mqtt
-    parser.add_argument('--sync', type=str, required=False, nargs='*', default=[False],
-                        help="Sync via mqtt. Defaults to channel bbo/sync/fr_idx")
+    parser.add_argument('--sync', type=str, required=False, nargs='*', default=["bbo/sync/t"],
+                        help="Sync via mqtt. Defaults to channel bbo/sync/t")
     parser.add_argument('-log', '--loglevel', default='info', help='Provide logging level')
 
     args = parser.parse_args()
@@ -43,7 +42,7 @@ def main():
         label_lib.combine_cams(args.combine_cams, target_file=input_path, yml_only=args.yml_only)
     else:
         app = QApplication([])
-        gui = ui.MainWindow(Path(input_path), sync=args.sync[0] if len(args.sync) > 0 else "bbo/sync/fr_idx")
+        gui = ui.MainWindow(Path(input_path), sync=args.sync[0] if len(args.sync) > 0 else False)
         gui.show()
         app.exec_()
 

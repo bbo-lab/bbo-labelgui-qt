@@ -1,18 +1,20 @@
 import logging
-import numpy as np
 import os
+import sys
+import time
+from pathlib import Path
+from typing import List, Dict, Optional
+
+import numpy as np
 import paho.mqtt.client as mqtt
 import pandas as pd
 import svidreader
-import sys
-import time
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import QMdiArea, \
     QFileDialog, \
     QMainWindow
 from bbo import label_lib, path_management as bbo_pm
-from pathlib import Path
-from typing import List, Dict, Optional
+from paho.mqtt.subscribeoptions import SubscribeOptions
 
 from labelgui import misc as labelgui_misc
 from labelgui.select_user import SelectUserWindow
@@ -97,6 +99,7 @@ class MainWindow(QMainWindow):
         self.init_viewer()
         self.fill_controls()
         self.connect_controls()
+        self.mqtt_connect()
 
         # GUI layout
         self.setCentralWidget(self.mdi)
@@ -106,7 +109,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"Labeling GUI - {self.dataset_name}")
 
         self.gui_loaded = True
-        self.mqtt_connect()
 
     # Init functions
     def init_files_folders(self):
@@ -203,7 +205,7 @@ class MainWindow(QMainWindow):
             for cam_idx, cam in enumerate(self.cameras):
                 video_times_dict = self.cfg["video_times"].get(cam_idx, {})
                 if 'file' in video_times_dict:
-                    # TODO: Check with Kay
+                    # TODO: Needs testing
                     times_pd = pd.read_csv(video_times_dict['file'], comment="#")
                     cam_times = np.array(times_pd.iloc[:, 0]).astype(float)  # Loading times from first column
                     assert len(cam_times) == num_frames[cam_idx], (f"video times in the csv file "
@@ -323,7 +325,7 @@ class MainWindow(QMainWindow):
             subwin.view_box.mouse_wheel_signal.connect(self.viewer_wheel_event)
 
         # mqtt
-        self.mqtt_message_signal.connect(self.set_time)
+        self.mqtt_message_signal.connect(lambda x: self.set_time(x, mqtt_publish=False))
 
     # Viewer functions
     def viewer_change_frame(self):
@@ -386,7 +388,7 @@ class MainWindow(QMainWindow):
                             break
 
                     if np.any(np.isnan(point)):
-                        # Fill from one closest neighbor, TODO: Counter from other side even if not symmetrical?
+                        # Fill from one closest neighbor
                         for offs in [-1, 1, -2, 2, -3, 3]:
                             if frame_idx + offs in label_dict:
                                 point = label_dict[frame_idx + offs]['coords'][(cam_idx,),]
@@ -506,7 +508,7 @@ class MainWindow(QMainWindow):
     def viewer_rotate(self):
         # Rotate view in all the subwindows
         for _, subwin in self.subwindows.items():
-            subwin.rotate_view(rot_angle =(subwin.rot_angle + 90) % 360)
+            subwin.rotate_view(rot_angle=(subwin.rot_angle + 90) % 360)
 
     def viewer_clear_labels(self):
         for cam_idx, subwin in self.subwindows.items():
@@ -528,20 +530,22 @@ class MainWindow(QMainWindow):
         if isinstance(self.sync, bool):
             return
         try:
-            self.mqtt_client = mqtt.Client()
+            self.mqtt_client = mqtt.Client(protocol=mqtt.MQTTv5)
             self.mqtt_client.on_message = self.mqtt_on_message
             self.mqtt_client.connect("127.0.0.1", 1883, 60)
-            self.mqtt_client.subscribe(self.sync)
+            mqtt_options = SubscribeOptions(noLocal=True)
+            self.mqtt_client.subscribe(self.sync, options=mqtt_options)
             self.mqtt_client.loop_start()
+            logger.log(logging.INFO, f'MQTT connected to {self.sync}')
         except ConnectionRefusedError:
             logger.log(logging.ERROR, "No connection to MQTT server.")
             self.mqtt_client = None
 
     def mqtt_publish(self):
-        # TODO: Test this function
         if self.mqtt_client is not None:
             try:
-                self.mqtt_client.publish(self.sync, payload="Not implemented yet")
+                logger.log(logging.DEBUG, "Publishing to MQTT server.")
+                self.mqtt_client.publish("bbo/sync/t", payload=str(self.current_time))
             except ConnectionRefusedError:
                 logger.log(logging.ERROR, "No connection to MQTT server.")
                 self.mqtt_client = None
@@ -550,11 +554,10 @@ class MainWindow(QMainWindow):
         # TODO: Test this function
         logger.log(logging.INFO, f"Received message '{message.payload.decode()}' on topic '{message.topic}'")
         match message.topic:
-            case "bbo/sync/fr_idx":
-                fr_idx = int(message.payload.decode())
-                cam_idx = 0  # TODO: This needs to be changed when to support multiple cams
+            case "bbo/sync/t":
+                msg_time = float(message.payload.decode())
                 # Intermediate signal is implemented to avoid issues with Qt components, since Qt components are not thread safe.
-                self.mqtt_message_signal.emit(self.cam_times[cam_idx][fr_idx])
+                self.mqtt_message_signal.emit(msg_time)
 
     # Getter functions
     def get_current_time(self):
@@ -603,7 +606,7 @@ class MainWindow(QMainWindow):
             return None
 
     # Setter functions
-    def set_time(self, valid_input_time: float, mqtt_publish=False, time_field_update=True):
+    def set_time(self, valid_input_time: float, mqtt_publish=True, time_field_update=True):
         if valid_input_time not in self.times:
             return
 
@@ -615,8 +618,8 @@ class MainWindow(QMainWindow):
             else:
                 subwin.frame_idx = None
 
-            if mqtt_publish:
-                self.mqtt_publish()
+        if mqtt_publish:
+            self.mqtt_publish()
 
         # Viewer
         self.viewer_change_frame()
@@ -774,7 +777,7 @@ class MainWindow(QMainWindow):
                 self.dock_sketch.widgets['buttons']['next_label'].click()
             elif controls_cfg['buttons']['previous_label'] and event.key() == Qt.Key_P:
                 self.dock_sketch.widgets['buttons']['previous_label'].click()
-            # This button is later added TODO: check with kay
+            # This button is later added
             elif controls_cfg['buttons'].get('rotate', True) and event.key() == Qt.Key_R:
                 self.dock_controls.widgets['buttons']['rotate'].click()
 
