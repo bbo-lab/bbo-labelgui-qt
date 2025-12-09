@@ -4,6 +4,8 @@ import sys
 import time
 from pathlib import Path
 from typing import List, Dict, Optional
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import paho.mqtt.client as mqtt
@@ -30,6 +32,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self, drive: Path, file_config=None, parent=None, sync: str | bool = False):
         super(MainWindow, self).__init__(parent)
+
+        self.save_thread = ThreadPoolExecutor(max_workers=1)
 
         self.user = None
         self.drive = drive
@@ -182,7 +186,7 @@ class MainWindow(QMainWindow):
         cameras = []
         logger.log(logging.DEBUG, svidreader.__file__)
         for file in files:
-            logger.log(logging.INFO, f"File name: {file.name}")
+            logger.log(logging.INFO, f"File name: {file.as_posix()}")
             reader = svidreader.get_reader(file.as_posix(), backend="iio", cache=True)
             header = labelgui_misc.read_video_meta(reader)
             cam = {
@@ -643,11 +647,11 @@ class MainWindow(QMainWindow):
             self.auto_save_counter = self.auto_save_counter + 1
             if np.mod(self.auto_save_counter, self.cfg['auto_save_N0']) == 0:
                 file = self.labels_folder / 'labels.yml'  # this is equal to self.labels_file
-                label_lib.save(file, self.labels)
+                self.save_labels(file)
                 logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
             if np.mod(self.auto_save_counter, self.cfg['auto_save_N1']) == 0:
                 file = self.labels_folder / 'autosave' / 'labels.yml'
-                label_lib.save(file, self.labels)
+                self.save_labels(file)
                 logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
 
                 self.auto_save_counter = 0
@@ -699,7 +703,23 @@ class MainWindow(QMainWindow):
         if file is None:
             file = self.labels_folder / 'labels.yml'
 
-        label_lib.save(file, self.labels)
+        lock = threading.Lock()
+        if lock.acquire(timeout=30):
+            # Locking here ensures that the data for the save is only prepared after the lock is successfully acquired
+            try:
+                self.save_thread.submit(self.save_labels_thread, file, self.labels, lock)
+            except Exception as e:
+                lock.release()
+                raise e
+        else:
+            raise RuntimeError('Labels file lock not acquired for 30 seconds!')
+
+    @staticmethod
+    def save_labels_thread(file: Path, labels, lock):
+        try:
+            label_lib.save(file, labels)
+        finally:
+            lock.release()
         logger.log(logging.INFO, f'Saved labels ({file.as_posix()})')
 
     def save_labels_as(self):
