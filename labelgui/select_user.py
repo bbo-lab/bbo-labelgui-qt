@@ -1,3 +1,7 @@
+import datetime
+
+import shutil
+
 import os
 from glob import glob
 from pathlib import Path
@@ -39,8 +43,14 @@ class SelectUserWindow(QDialog):
                                             QSizePolicy.Preferred)
         self.selecting_layout.addWidget(self.selecting_button)
 
+        self.remove_button = QPushButton('Remove')
+        self.remove_button.setSizePolicy(QSizePolicy.Expanding,
+                                            QSizePolicy.Preferred)
+        self.selecting_layout.addWidget(self.remove_button)
+
         self.user_combobox.currentIndexChanged.connect(self.user_change)
         self.selecting_button.clicked.connect(self.accept)
+        self.remove_button.clicked.connect(self.remove)
 
         self.setLayout(self.selecting_layout)
 
@@ -121,6 +131,24 @@ class SelectUserWindow(QDialog):
         else:
             job = None
         return job
+
+    def remove(self):
+        user = self.get_user()
+        job = self.get_job()
+
+        job_dir = self.drive / 'data' / 'user' / user / 'jobs'
+        (job_dir / "done").mkdir(exist_ok=True)
+        for ext in ['yml', 'py']:
+            file = job_dir /  f'{job}.{ext}'
+            if file.is_file():
+                shutil.move(file, job_dir / "done" / f'{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}_{job}.{ext}')
+            else:
+                print(f"File {file} does not exist.")
+        print(self.user_list, self.job_names, self.user_combobox.currentIndex(), self.job_combobox.currentIndex())
+        self.job_combobox.removeItem(self.job_combobox.currentIndex())
+        self.job_names.remove(job)
+        print(self.user_list, self.job_names, self.user_combobox.currentIndex(), self.job_combobox.currentIndex())
+
 
     @staticmethod
     def start(drive, parent=None):
