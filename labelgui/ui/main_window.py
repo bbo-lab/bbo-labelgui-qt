@@ -617,10 +617,8 @@ class MainWindow(QMainWindow):
         self.current_time = valid_input_time
 
         for cam_idx, subwin in self.subwindows.items():
-            if valid_input_time in self.cam_times[cam_idx]:
-                subwin.frame_idx = self.cam_times[cam_idx].index(valid_input_time)
-            else:
-                subwin.frame_idx = None
+            frame_idx = np.argmin(np.abs(np.array(self.cam_times[cam_idx])-valid_input_time))
+            subwin.frame_idx =frame_idx
 
         if mqtt_publish:
             self.mqtt_publish()
@@ -764,7 +762,20 @@ class MainWindow(QMainWindow):
             subwin.set_current_label(label_name=self.get_current_label())
 
     def move_num_timepoints(self, num: int):
-        self.set_time(self.get_valid_time(self.current_time + num * self.d_time))
+        if self.d_time == 0:
+            next_time_idx = min(len(self.times) - 1, self.times.index(self.current_time) + num)
+            d_time = self.times[next_time_idx] - self.current_time
+            # print(d_time)
+        elif self.d_time < 0:
+            cam_idx = min(len(self.cam_times)-1,int(round(-self.d_time-1)))
+            current_cam_time_idx = np.argmin(np.abs(np.array(self.cam_times[cam_idx])-self.current_time))
+            n_cam_times = len(self.cam_times[cam_idx])
+            # print(n_cam_times, current_cam_time_idx)
+            d_time = (self.cam_times[cam_idx][min(n_cam_times-1, current_cam_time_idx+num)]
+                      - self.cam_times[cam_idx][current_cam_time_idx])
+        else:
+            d_time = self.d_time * num
+        self.set_time(self.get_valid_time(self.current_time + d_time))
 
     def goto_next_time(self):
         self.move_num_timepoints(1)

@@ -71,7 +71,7 @@ def read_cfg_from_py(path: Path, saveas_yml: Path | None = None):
 
         # LABELS
         "load_labels_file": None,  # str: Give path to file or takes labels from canonical path
-        "reference_labels_file": False,
+        "reference_labels_file": True,
         # bool or str: If True, takes ref labels from the canonical path. Or specify path to file
 
         # DATA SELECTION
