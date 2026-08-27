@@ -1,21 +1,21 @@
 import logging
 
 import numpy as np
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QApplication, QMdiSubWindow, QLabel, QSpinBox, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import QApplication, QMdiSubWindow, QLabel, QSpinBox, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox
 
 logger = logging.getLogger(__name__)
 
 
 class CustomViewBox(pg.ViewBox):
-    mouse_wheel_signal = pyqtSignal(int)
+    mouse_wheel_signal = Signal(int)
 
     def __init__(self, parent=None, *args, **kwargs):
         super().__init__(parent=parent, *args, **kwargs)
 
     def wheelEvent(self, event):
-        if event.modifiers() & Qt.ShiftModifier:
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
             self.mouse_wheel_signal.emit(event.delta())
             event.accept()
         else:
@@ -23,7 +23,7 @@ class CustomViewBox(pg.ViewBox):
 
 
 class ViewerSubWindow(QMdiSubWindow):
-    mouse_clicked_signal = pyqtSignal(float, float, int, int, str)
+    mouse_clicked_signal = Signal(float, float, int, int, str)
     # Necessary to follow camelCase for keys here, for compatibility with pyqtgraph
     plot_params = {
         'label': {'symbol': 'o', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
@@ -38,7 +38,9 @@ class ViewerSubWindow(QMdiSubWindow):
 
         super().__init__(parent)
         # TODO: It will be ideal to have minimize and maximize buttons without close button
-        self.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+        self.setWindowFlags(
+            Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint
+        )
 
         self.index = index
         self.reader = reader
@@ -211,19 +213,19 @@ class ViewerSubWindow(QMdiSubWindow):
             mouse_point = self.view_box.mapSceneToView(scene_coords)
 
             # Left click
-            if event.button() == 1:
-                if modifiers == Qt.ShiftModifier:
+            if event.button() == Qt.MouseButton.LeftButton:
+                if modifiers == Qt.KeyboardModifier.ShiftModifier:
                     action_str = 'select_label'
-                elif modifiers == Qt.ControlModifier:
+                elif modifiers == Qt.KeyboardModifier.ControlModifier:
                     action_str = 'select_ref_label'
-                elif modifiers == Qt.AltModifier:
+                elif modifiers == Qt.KeyboardModifier.AltModifier:
                     # TODO:
                     action_str = 'auto_label'
                     logger.log(logging.WARNING, "Not yet implemented")
                 else:
                     action_str = 'create_label'
             # Right click
-            elif event.button() == 2:
+            elif event.button() == Qt.MouseButton.RightButton:
                 action_str = 'delete_label'
             else:
                 return

@@ -7,8 +7,8 @@ from glob import glob
 from pathlib import Path
 
 import yaml
-from PyQt5.QtGui import QGuiApplication
-from PyQt5.QtWidgets import QDialog, QGridLayout, QComboBox, QSizePolicy, QPushButton
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QDialog, QGridLayout, QComboBox, QSizePolicy, QPushButton
 
 
 class SelectUserWindow(QDialog):
@@ -28,24 +28,24 @@ class SelectUserWindow(QDialog):
         self.user_combobox = QComboBox()
         self.user_combobox.addItems(self.user_list)
         self.user_combobox.setCurrentIndex(-1)
-        self.user_combobox.setSizePolicy(QSizePolicy.Expanding,
-                                         QSizePolicy.Preferred)
+        self.user_combobox.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                         QSizePolicy.Policy.Preferred)
         self.selecting_layout.addWidget(self.user_combobox)
 
         self.job_combobox = QComboBox()
         self.job_combobox.setDisabled(True)
-        self.job_combobox.setSizePolicy(QSizePolicy.Expanding,
-                                        QSizePolicy.Preferred)
+        self.job_combobox.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                        QSizePolicy.Policy.Preferred)
         self.selecting_layout.addWidget(self.job_combobox)
 
         self.selecting_button = QPushButton('Ok')
-        self.selecting_button.setSizePolicy(QSizePolicy.Expanding,
-                                            QSizePolicy.Preferred)
+        self.selecting_button.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                            QSizePolicy.Policy.Preferred)
         self.selecting_layout.addWidget(self.selecting_button)
 
         self.remove_button = QPushButton('Remove')
-        self.remove_button.setSizePolicy(QSizePolicy.Expanding,
-                                            QSizePolicy.Preferred)
+        self.remove_button.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                         QSizePolicy.Policy.Preferred)
         self.selecting_layout.addWidget(self.remove_button)
 
         self.user_combobox.currentIndexChanged.connect(self.user_change)
@@ -153,9 +153,9 @@ class SelectUserWindow(QDialog):
     @staticmethod
     def start(drive, parent=None):
         selecting = SelectUserWindow(drive=drive, parent=parent)
-        exit_sel = selecting.exec_()
+        exit_sel = selecting.exec()
         user = selecting.get_user()
         job = selecting.get_job()
         selecting.write_defaults(user, job)
 
-        return user, job, exit_sel == QDialog.Accepted
+        return user, job, exit_sel == QDialog.DialogCode.Accepted

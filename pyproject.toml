@@ -22,6 +22,7 @@ dependencies = [
     "imageio",
     "matplotlib",
     "numpy",
+    "PySide6",
 ]
 
 [project.urls]
@@ -37,4 +38,3 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["labelgui"]
-

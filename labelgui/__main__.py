@@ -3,7 +3,7 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt5.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 from bbo import label_lib
 
 from . import ui
@@ -44,7 +44,7 @@ def main():
         app = QApplication([])
         gui = ui.MainWindow(Path(input_path), sync=args.sync[0] if len(args.sync) > 0 else False)
         gui.show()
-        app.exec_()
+        app.exec()
 
     return
 

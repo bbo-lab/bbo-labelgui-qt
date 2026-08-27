@@ -1,8 +1,8 @@
 import logging
 import numpy as np
-from PyQt5.QtWidgets import (QWidget, QDockWidget, QVBoxLayout, QComboBox,
-                             QListWidget, QHBoxLayout, QAbstractItemView, QPushButton)
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from PySide6.QtWidgets import (QWidget, QDockWidget, QVBoxLayout, QComboBox,
+                               QListWidget, QHBoxLayout, QAbstractItemView, QPushButton)
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from pathlib import Path
 from typing import List
@@ -41,7 +41,10 @@ class SketchDock(QDockWidget):
     def __init__(self):
 
         super().__init__("Sketch")
-        self.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
 
         self.graph_widgets = {
             # Graphical widgets
@@ -84,16 +87,18 @@ class SketchDock(QDockWidget):
 
         # Labels list display
         self.list_labels = QListWidget()
-        self.list_labels.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.list_labels.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         main_layout.addWidget(self.list_labels)
         main_layout.setStretchFactor(self.list_labels, 5)
         self.widgets['lists']['labels'] = self.list_labels  # adding to widgets for completeness
 
         button_widget = QWidget()
         hbox = QHBoxLayout(button_widget)
-        self.widgets['buttons']['previous_label'] = QPushButton("Previous Label (P)", self, enabled=False)
+        self.widgets['buttons']['previous_label'] = QPushButton("Previous Label (P)", self)
+        self.widgets['buttons']['previous_label'].setEnabled(False)
         hbox.addWidget(self.widgets['buttons']['previous_label'])
-        self.widgets['buttons']['next_label'] = QPushButton("Next Label (N)", self, enabled=False)
+        self.widgets['buttons']['next_label'] = QPushButton("Next Label (N)", self)
+        self.widgets['buttons']['next_label'].setEnabled(False)
         hbox.addWidget(self.widgets['buttons']['next_label'])
         main_layout.addWidget(button_widget)
 

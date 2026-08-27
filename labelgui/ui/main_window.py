@@ -11,8 +11,8 @@ import numpy as np
 import paho.mqtt.client as mqtt
 import pandas as pd
 import svidreader
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import QMdiArea, \
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QMdiArea, \
     QFileDialog, \
     QMainWindow
 from bbo import label_lib, path_management as bbo_pm
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
-    mqtt_message_signal = pyqtSignal(float)
+    mqtt_message_signal = Signal(float)
 
     def __init__(self, drive: Path, file_config=None, parent=None, sync: str | bool = False):
         super(MainWindow, self).__init__(parent)
@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
                 window.redraw_frame()
                 self.subwindows[cam_idx] = window
 
-        self.mdi.setViewMode(QMdiArea.TabbedView)
+        self.mdi.setViewMode(QMdiArea.ViewMode.TabbedView)
         self.set_time(self.current_time, time_field_update=False)
 
     def fill_controls(self):
@@ -634,11 +634,11 @@ class MainWindow(QMainWindow):
 
     def set_docks_layout(self):
         # Right dock area
-        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_sketch)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_controls)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_sketch)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_controls)
 
         self.resizeDocks([self.dock_sketch, self.dock_controls],
-                         [600, 600], Qt.Horizontal)
+                         [600, 600], Qt.Orientation.Horizontal)
 
     def trigger_autosave_event(self):
         if self.cfg['auto_save']:
@@ -730,12 +730,12 @@ class MainWindow(QMainWindow):
     def mdi_view_select(self, view_mode: str):
         match view_mode:
             case "tab_view":
-                self.mdi.setViewMode(QMdiArea.TabbedView)
+                self.mdi.setViewMode(QMdiArea.ViewMode.TabbedView)
             case "tile_view":
-                self.mdi.setViewMode(QMdiArea.SubWindowView)
+                self.mdi.setViewMode(QMdiArea.ViewMode.SubWindowView)
                 self.mdi.tileSubWindows()
             case "cascade_view":
-                self.mdi.setViewMode(QMdiArea.SubWindowView)
+                self.mdi.setViewMode(QMdiArea.ViewMode.SubWindowView)
                 self.mdi.cascadeSubWindows()
             case _:
                 logger.log(logging.WARNING, f"Unknown MDI view mode selected")
@@ -795,21 +795,21 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, event):
         controls_cfg = self.cfg['controls']
 
-        if controls_cfg['buttons']['next_time'] and event.key() == Qt.Key_D:
+        if controls_cfg['buttons']['next_time'] and event.key() == Qt.Key.Key_D:
             self.goto_next_time()
-        elif controls_cfg['buttons']['previous_time'] and event.key() == Qt.Key_A:
+        elif controls_cfg['buttons']['previous_time'] and event.key() == Qt.Key.Key_A:
             self.goto_previous_time()
         elif not event.isAutoRepeat():
-            if controls_cfg['buttons']['save_labels'] and event.key() == Qt.Key_S:
+            if controls_cfg['buttons']['save_labels'] and event.key() == Qt.Key.Key_S:
                 self.save_labels()
-            elif controls_cfg['buttons']['zoom_out'] and event.key() == Qt.Key_O:
+            elif controls_cfg['buttons']['zoom_out'] and event.key() == Qt.Key.Key_O:
                 self.dock_controls.widgets['buttons']['zoom_out'].click()
-            elif controls_cfg['buttons']['next_label'] and event.key() == Qt.Key_N:
+            elif controls_cfg['buttons']['next_label'] and event.key() == Qt.Key.Key_N:
                 self.dock_sketch.widgets['buttons']['next_label'].click()
-            elif controls_cfg['buttons']['previous_label'] and event.key() == Qt.Key_P:
+            elif controls_cfg['buttons']['previous_label'] and event.key() == Qt.Key.Key_P:
                 self.dock_sketch.widgets['buttons']['previous_label'].click()
             # This button is later added
-            elif controls_cfg['buttons'].get('rotate', True) and event.key() == Qt.Key_R:
+            elif controls_cfg['buttons'].get('rotate', True) and event.key() == Qt.Key.Key_R:
                 self.dock_controls.widgets['buttons']['rotate'].click()
 
     def closeEvent(self, event):

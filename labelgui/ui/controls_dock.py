@@ -1,6 +1,6 @@
-from PyQt5.QtGui import QDoubleValidator
-from PyQt5.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
-                             QPushButton, QDockWidget)
+from PySide6.QtGui import QDoubleValidator
+from PySide6.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
+                               QPushButton, QDockWidget)
 
 
 class ControlsDock(QDockWidget):
@@ -8,7 +8,10 @@ class ControlsDock(QDockWidget):
     def __init__(self):
         # Setup widget
         super().__init__("Controls")
-        self.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
 
         main_widget = QWidget()
         self.widgets = {
@@ -25,7 +28,9 @@ class ControlsDock(QDockWidget):
 
         row += 1
         self.add_label("current time:", row, 0, "current_time")
-        self.add_field(row, 1, "current_time", validator=QDoubleValidator(decimals=6))
+        current_time_validator = QDoubleValidator()
+        current_time_validator.setDecimals(6)
+        self.add_field(row, 1, "current_time", validator=current_time_validator)
 
         row += 1
         self.add_button("Previous Timepoint (A)", row, 0, "previous_time")
@@ -52,7 +57,8 @@ class ControlsDock(QDockWidget):
         self.widgets['labels'][label_key] = label_widget
 
     def add_field(self, row_idx: int, col_idx: int, field_key: str, validator=None):
-        field_widget = QLineEdit(self, enabled=False)
+        field_widget = QLineEdit(self)
+        field_widget.setEnabled(False)
 
         if validator is not None:
             field_widget.setValidator(validator)
@@ -63,7 +69,8 @@ class ControlsDock(QDockWidget):
         self.widgets['fields'][field_key] = field_widget
 
     def add_button(self, button_text: str, row_idx: int, col_idx: int, button_key=None):
-        button_widget = QPushButton(button_text, self, enabled=False)
+        button_widget = QPushButton(button_text, self)
+        button_widget.setEnabled(False)
         self.layout_grid.setColumnStretch(col_idx, 1)
         self.layout_grid.setRowStretch(row_idx, 1)
         self.layout_grid.addWidget(button_widget, row_idx, col_idx, 1, 1)
