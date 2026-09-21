@@ -110,6 +110,7 @@ class SketchDock(QDockWidget):
         for sf in sketch_files:
             if sf.exists():
                 sketches.append(np.load(sf.as_posix(), allow_pickle=True)[()])
+                logger.log(logging.INFO, f'Autoloading sketch file {sf}.')
             else:
                 logger.log(logging.WARNING, f'Autoloading failed. Sketch file {sf} does not exist.')
 

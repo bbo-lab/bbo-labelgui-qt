@@ -568,7 +568,7 @@ class MainWindow(QMainWindow):
         return self.current_time
 
     def get_n_frames(self):
-        return [cam["header"]["num_frames"] for cam in self.cameras]
+        return [len(cam["reader"]) for cam in self.cameras]
 
     def get_fps(self):
         return [cam["header"]["fps"] for cam in self.cameras]
@@ -765,12 +765,10 @@ class MainWindow(QMainWindow):
         if self.d_time == 0:
             next_time_idx = min(len(self.times) - 1, self.times.index(self.current_time) + num)
             d_time = self.times[next_time_idx] - self.current_time
-            # print(d_time)
         elif self.d_time < 0:
             cam_idx = min(len(self.cam_times)-1,int(round(-self.d_time-1)))
             current_cam_time_idx = np.argmin(np.abs(np.array(self.cam_times[cam_idx])-self.current_time))
             n_cam_times = len(self.cam_times[cam_idx])
-            # print(n_cam_times, current_cam_time_idx)
             d_time = (self.cam_times[cam_idx][min(n_cam_times-1, current_cam_time_idx+num)]
                       - self.cam_times[cam_idx][current_cam_time_idx])
         else:
