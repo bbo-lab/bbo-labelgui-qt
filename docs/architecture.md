@@ -68,7 +68,9 @@ Jobs retain the existing keys, BBO YAML includes/path placeholders, and legacy
 `sketch_label_locations`. YAML sketches (`.yml`/`.yaml`) use `version: "1.0"`,
 an image filename in `sketch`, and the same `sketch_label_locations` mapping.
 Relative image filenames resolve against the sketch YAML's directory. Image I/O
-uses imageio without importing the GUI. See `example/sketch.yml`.
+uses imageio without importing the GUI. SVG images are rasterized through CairoSVG
+at their intrinsic size (96 DPI), preserving transparency; landmark coordinates
+remain rendered image pixels. See `example/sketch.yml` and `example/sketch_svg.yml`.
 Labels use BBO's versioned format unchanged:
 
 ```text

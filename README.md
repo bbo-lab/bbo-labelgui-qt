@@ -43,7 +43,7 @@ sketch_label_locations:
   eye: [140, 50]
 ```
 
-`sketch` references an image file (for example PNG or JPEG). Relative image paths
+`sketch` references an image file (for example PNG, JPEG, or SVG). Relative image paths
 are resolved from the directory containing the sketch YAML file; absolute paths
 are also supported. Coordinates are `[x, y]` in image pixels, with `[0, 0]` at the
 top-left, x increasing to the right and y downwards. Landmark order follows the
@@ -52,6 +52,15 @@ YAML mapping order. The format version is required; currently `"1.0"` is support
 See [example/sketch.yml](example/sketch.yml) for a complete example with an included
 image. Existing `.npy` sketches continue to embed the image array and landmark
 dictionary without requiring a version field.
+
+SVG sketches are rasterized at their declared width and height, using 96 DPI for
+physical units. If only a `viewBox` is specified, its width and height determine
+the image size. Landmark coordinates refer to the rendered image's pixels, not
+the SVG's internal coordinates when its `viewBox` uses a different scale or origin.
+For a direct match, use `width="240" height="160" viewBox="0 0 240 160"`.
+Transparency is preserved. See [example/sketch_svg.yml](example/sketch_svg.yml).
+SVG rendering uses [CairoSVG](https://cairosvg.org/documentation/), included in the
+project dependencies; its native Cairo library must also be available.
 
 ## Camera windows
 

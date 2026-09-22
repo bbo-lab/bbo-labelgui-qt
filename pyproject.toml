@@ -20,6 +20,7 @@ dependencies = [
     "bbo_ccvtools",
     "bbo_svidreader",
     "imageio",
+    "CairoSVG>=2.7",
     "matplotlib",
     "numpy",
     "PySide6",

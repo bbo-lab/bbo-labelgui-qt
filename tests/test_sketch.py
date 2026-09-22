@@ -50,6 +50,44 @@ class SketchTests(unittest.TestCase):
         np.testing.assert_array_equal(sketch.image, self.image)
         self.assertEqual(sketch.locations['eye'], (1.5, 2.))
 
+    def test_svg_dimensions_transparency_and_landmark_alignment(self):
+        for dimensions in ('width="40" height="20"', 'viewBox="0 0 40 20"',
+                           'width="40" height="20" viewBox="10 20 20 10"'):
+            with self.subTest(dimensions=dimensions):
+                scaled = 'viewBox="10' in dimensions
+                rect = 'x="15" y="22" width="10" height="6"' if scaled else (
+                    'x="10" y="4" width="20" height="12"')
+                svg = self.root / 'bird.SVG'
+                svg.write_text(f'<svg xmlns="http://www.w3.org/2000/svg" {dimensions}>'
+                               f'<rect {rect} fill="red"/></svg>', encoding='utf-8')
+                self.data.update(sketch='../bird.SVG', sketch_label_locations={'center': [20, 10]})
+                sketch = Sketch.load(self.write_yaml(self.data))
+                self.assertEqual(sketch.image.shape, (20, 40, 4))
+                np.testing.assert_array_equal(sketch.image[10, 20], [255, 0, 0, 255])
+                self.assertEqual(sketch.image[0, 0, 3], 0)
+                self.assertEqual(sketch.nearest_label(20, 10), 'center')
+                self.data['sketch'] = str(svg)
+                absolute = Sketch.load(self.write_yaml(self.data))
+                np.testing.assert_array_equal(absolute.image, sketch.image)
+
+    def test_missing_and_invalid_svg(self):
+        self.data['sketch'] = '../missing.svg'
+        with self.assertRaises(FileNotFoundError):
+            Sketch.load(self.write_yaml(self.data))
+        svg = self.root / 'broken.svg'
+        self.data['sketch'] = '../broken.svg'
+        for content in ('<svg', '<svg xmlns="http://www.w3.org/2000/svg"/>'):
+            with self.subTest(content=content):
+                svg.write_text(content, encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'Could not render SVG sketch image'):
+                    Sketch.load(self.write_yaml(self.data))
+
+    def test_bundled_svg_example(self):
+        path = Path(__file__).resolve().parents[1] / 'example' / 'sketch_svg.yml'
+        sketch = Sketch.load(path)
+        self.assertEqual(sketch.image.shape, (160, 240, 4))
+        self.assertEqual(sketch.nearest_label(220, 80), 'beak_tip')
+
     def test_missing_or_unsupported_version(self):
         for version in (None, '2.0', True):
             with self.subTest(version=version):

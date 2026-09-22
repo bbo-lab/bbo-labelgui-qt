@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 240 160">
+  <title>Schematic bird head</title>
+  <desc>A bird head in profile, with the beak pointing right.</desc>
+  <path d="M 60 80 C 60 35 95 20 125 20 C 155 20 180 40 180 65
+           L 220 80 L 180 95 C 170 120 145 140 110 140
+           C 75 140 60 115 60 80 Z"
+        fill="#d3dae3" stroke="#334155" stroke-width="2"/>
+  <path d="M 180 65 L 220 80 L 180 95 Z" fill="#e6a849" stroke="#334155" stroke-width="2"/>
+  <circle cx="140" cy="50" r="7" fill="#334155"/>
+  <circle cx="142" cy="48" r="2" fill="white"/>
+</svg>

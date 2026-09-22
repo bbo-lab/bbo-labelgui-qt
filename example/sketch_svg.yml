@@ -1,0 +1,7 @@
+# Image paths are relative to this YAML file; coordinates are rendered pixels.
+version: "1.0"
+sketch: images/bird.svg
+sketch_label_locations:
+  beak_tip: [220, 80]
+  eye: [140, 50]
+  back_of_head: [60, 80]

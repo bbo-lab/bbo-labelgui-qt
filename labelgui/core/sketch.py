@@ -32,7 +32,17 @@ class Sketch:
             image_path = Path(image_file).expanduser()
             if not image_path.is_absolute():
                 image_path = path.parent / image_path
-            image = np.asarray(imread(image_path), dtype=np.uint8)
+            if image_path.suffix.lower() == '.svg':
+                from cairosvg import svg2png
+
+                with image_path.open('rb') as svg:
+                    try:
+                        rendered = svg2png(file_obj=svg, dpi=96)
+                    except Exception as error:
+                        raise ValueError(f"Could not render SVG sketch image {image_path}: {error}") from error
+                image = np.asarray(imread(rendered, extension='.png'), dtype=np.uint8)
+            else:
+                image = np.asarray(imread(image_path), dtype=np.uint8)
         elif path.suffix.lower() == '.npy':
             data = np.load(path, allow_pickle=True)[()]
             image = np.asarray(data['sketch'], dtype=np.uint8)

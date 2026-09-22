@@ -368,6 +368,9 @@ class IntegrationTests(unittest.TestCase):
 import sys
 import labelgui.core.session
 import labelgui.__main__
+from pathlib import Path
+from labelgui.core.sketch import Sketch
+Sketch.load(Path('example/sketch_svg.yml'))
 assert not any(name.startswith(('PySide6', 'pyqtgraph', 'matplotlib')) for name in sys.modules)
 '''
         subprocess.run([sys.executable, '-c', code], check=True)
