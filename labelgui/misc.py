@@ -40,7 +40,8 @@ def read_video_meta(reader):
         header['sensorsize'] = tuple(header['sensor']['size'])
     else:
         print("Infering sensor size from image and setting offset to 0!")
-        header['sensorsize'] = (reader.get_data(0).shape[1], reader.get_data(0).shape[0], reader.get_data(0).shape[2])
+        shape = reader.get_data(0).shape
+        header['sensorsize'] = (shape[1], shape[0], shape[2] if len(shape) > 2 else 1)
         header['offset'] = tuple(np.asarray([0, 0]))
 
     return header

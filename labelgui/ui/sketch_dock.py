@@ -1,249 +1,107 @@
-import logging
+"""Render sketch assets and emit user intent; selection belongs to the session."""
 import numpy as np
+from PySide6.QtCore import Signal, QSignalBlocker
 from PySide6.QtWidgets import (QWidget, QDockWidget, QVBoxLayout, QComboBox,
                                QListWidget, QHBoxLayout, QAbstractItemView, QPushButton)
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from pathlib import Path
-from typing import List
-
-logger = logging.getLogger(__name__)
 
 
 class SketchDock(QDockWidget):
-    """
-    A dock widget for displaying and interacting with sketches.
-
-    This widget allows users to view sketches, zoom in on specific areas,
-    and interact with labeled points on the sketch.
-    """
-
-    FULL_SKETCH_DIMS = [0 / 3, 1 / 18, 1 / 3, 16 / 18]
-    ZOOM_SKETCH_DIMS = [1 / 3, 5 / 18, 2 / 3, 12 / 18]
-    # highlight markers
-    HIGHLIGHT_DOT_PARAMS = {
-        'color': 'darkgreen',
-        'marker': '.',
-        'markersize': 2,
-        'alpha': 1.0,
-        'zorder': 2,
-    }
-    HIGHLIGHT_CIRCLE_PARAMS = {
-        'color': 'darkgreen',
-        'marker': 'o',
-        'markersize': 40,
-        'markeredgewidth': 4,
-        'fillstyle': 'none',
-        'alpha': 2 / 3,
-        'zorder': 2,
-    }
+    label_selected = Signal(str)
+    sketch_selected = Signal(int)
+    point_selected = Signal(float, float)
 
     def __init__(self):
-
-        super().__init__("Sketch")
-        self.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
-
-        self.graph_widgets = {
-            # Graphical widgets
-            'canvas': {},
-            'figs': {},
-            'axes': {},
-            'highlight_dot': {},
-            'highlight_circle': {}
-        }
-        self.widgets = {
-            'buttons': {},
-            'lists': {}
-        }
-        self.sketches = []
-        self.current_sketch_idx = None
-        self.sketches_loaded = False
-
+        super().__init__('Sketch')
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
+                         | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
         self.sketch_zoom_scale = 0.1
-        self.sketch_zoom_dy = None
-        self.sketch_zoom_dx = None
-
-        main_widget = QWidget()
-        main_layout = QVBoxLayout(main_widget)
-
-        self.graph_widgets['figs']['sketch'] = Figure()
-        self.graph_widgets['canvas']['sketch'] = FigureCanvasQTAgg(self.graph_widgets['figs']['sketch'])
-
-        # full
-        self.graph_widgets['axes']['sketch'] = self.graph_widgets['figs']['sketch'].add_axes(self.FULL_SKETCH_DIMS)
-
-        # zoom
-        self.graph_widgets['axes']['sketch_zoom'] = self.graph_widgets['figs']['sketch'].add_axes(self.ZOOM_SKETCH_DIMS)
-
-        main_layout.addWidget(self.graph_widgets['canvas']['sketch'])
-
-        # Sketch selection combo
+        self.sketch = None
+        self.widgets = {'buttons': {}}
+        main = QWidget()
+        layout = QVBoxLayout(main)
+        self.figure = Figure()
+        self.canvas = FigureCanvasQTAgg(self.figure)
+        self.full_axes = self.figure.add_axes([0, 1 / 18, 1 / 3, 16 / 18])
+        self.zoom_axes = self.figure.add_axes([1 / 3, 5 / 18, 2 / 3, 12 / 18])
+        self.highlights = []
+        layout.addWidget(self.canvas)
         self.combobox_sketches = QComboBox()
-        self.combobox_sketches.setDisabled(True)
-        main_layout.addWidget(self.combobox_sketches)
-
-        # Labels list display
+        layout.addWidget(self.combobox_sketches)
         self.list_labels = QListWidget()
         self.list_labels.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        main_layout.addWidget(self.list_labels)
-        main_layout.setStretchFactor(self.list_labels, 5)
-        self.widgets['lists']['labels'] = self.list_labels  # adding to widgets for completeness
+        layout.addWidget(self.list_labels)
+        layout.setStretchFactor(self.list_labels, 5)
+        buttons = QWidget()
+        row = QHBoxLayout(buttons)
+        for name, title in [('previous_label', 'Previous Label (P)'), ('next_label', 'Next Label (N)')]:
+            button = QPushButton(title)
+            self.widgets['buttons'][name] = button
+            row.addWidget(button)
+        layout.addWidget(buttons)
+        self.setWidget(main)
+        self.combobox_sketches.currentIndexChanged.connect(self._sketch_changed)
+        self.list_labels.currentTextChanged.connect(self._label_changed)
+        self.canvas.mpl_connect('button_press_event', self.sketch_click)
 
-        button_widget = QWidget()
-        hbox = QHBoxLayout(button_widget)
-        self.widgets['buttons']['previous_label'] = QPushButton("Previous Label (P)", self)
-        self.widgets['buttons']['previous_label'].setEnabled(False)
-        hbox.addWidget(self.widgets['buttons']['previous_label'])
-        self.widgets['buttons']['next_label'] = QPushButton("Next Label (N)", self)
-        self.widgets['buttons']['next_label'].setEnabled(False)
-        hbox.addWidget(self.widgets['buttons']['next_label'])
-        main_layout.addWidget(button_widget)
+    def set_sketch_names(self, names):
+        with QSignalBlocker(self.combobox_sketches):
+            self.combobox_sketches.clear()
+            self.combobox_sketches.addItems(names)
 
-        self.setWidget(main_widget)
+    def connect_label_buttons(self, controls_cfg):
+        for name, direction in [('previous_label', -1), ('next_label', 1)]:
+            button = self.widgets['buttons'][name]
+            button.setEnabled(controls_cfg['buttons'].get(name, True))
+            button.clicked.connect(lambda checked=False, step=direction: self._move_label(step))
 
-    def load_sketches(self, sketch_files: List[Path]):
-        # load sketches
-        sketches = []
-        for sf in sketch_files:
-            if sf.exists():
-                sketches.append(np.load(sf.as_posix(), allow_pickle=True)[()])
-                logger.log(logging.INFO, f'Autoloading sketch file {sf}.')
-            else:
-                logger.log(logging.WARNING, f'Autoloading failed. Sketch file {sf} does not exist.')
+    def _move_label(self, step):
+        if self.list_labels.count():
+            self.list_labels.setCurrentRow((self.list_labels.currentRow() + step) % self.list_labels.count())
 
-        if len(sketches):
-            self.sketches = sketches
-            self.current_sketch_idx = 0
-            self.sketches_loaded = True
+    def _sketch_changed(self, index):
+        if index >= 0:
+            self.sketch_selected.emit(index)
 
-    def init_sketch(self):
-        sketch = self.get_sketch_image()
-        self.set_sketch_zoom()
+    def _label_changed(self, name):
+        if name:
+            self.label_selected.emit(name)
 
-        # full
-        self.graph_widgets['axes']['sketch'].imshow(sketch)
-        self.graph_widgets['axes']['sketch'].axis('off')
-        self.graph_widgets['axes']['sketch'].set_title('Full:',
-                                                       ha='center', va='center',
-                                                       zorder=0)
+    def display_sketch(self, sketch, index, selected_label):
+        self.sketch = sketch
+        with QSignalBlocker(self.combobox_sketches), QSignalBlocker(self.list_labels):
+            self.combobox_sketches.setCurrentIndex(index)
+            self.list_labels.clear()
+            self.list_labels.addItems(list(sketch.locations))
+        self.highlights = []
+        coordinates = np.asarray(list(sketch.locations.values()))
+        for axes, title in [(self.full_axes, 'Full:'), (self.zoom_axes, 'Zoom:')]:
+            axes.clear()
+            axes.imshow(sketch.image)
+            axes.axis('off')
+            axes.set_title(title)
+            axes.plot(coordinates[:, 0], coordinates[:, 1], linestyle='none', marker='o',
+                      color='orange', markersize=3)
+            self.highlights.append(axes.plot([], [], marker='.', color='darkgreen', markersize=2)[0])
+            self.highlights.append(axes.plot([], [], marker='o', color='darkgreen', markersize=40,
+                                             markeredgewidth=4, fillstyle='none', alpha=2 / 3)[0])
+        self.display_selection(selected_label)
 
-        # zoom
-        self.graph_widgets['axes']['sketch_zoom'].imshow(sketch)
-        self.graph_widgets['axes']['sketch_zoom'].set_xlim(
-            [np.shape(sketch)[1] / 2 - self.sketch_zoom_dx, np.shape(sketch)[1] / 2 + self.sketch_zoom_dx])
-        self.graph_widgets['axes']['sketch_zoom'].set_ylim(
-            [np.shape(sketch)[0] / 2 - self.sketch_zoom_dy, np.shape(sketch)[0] / 2 + self.sketch_zoom_dy])
-        self.graph_widgets['axes']['sketch_zoom'].axis('off')
-        self.graph_widgets['axes']['sketch_zoom'].set_title('Zoom:',
-                                                            ha='center', va='center',
-                                                            zorder=0)
-
-        self.init_sketch_labels()
-        self.update_sketch()
-
-    def init_sketch_labels(self):
-        # Plot all the labels
-        for label_name, label_location in self.get_sketch_labels().items():
-            self.graph_widgets['axes']['sketch'].plot([label_location[0]], [label_location[1]],
-                                                      marker='o',
-                                                      color='orange',
-                                                      markersize=3,
-                                                      zorder=1)
-
-            self.graph_widgets['axes']['sketch_zoom'].plot([label_location[0]],
-                                                           [label_location[1]],
-                                                           marker='o',
-                                                           color='orange',
-                                                           markersize=5,
-                                                           zorder=1)
-
-        self.graph_widgets['highlight_dot']['sketch'] = self.graph_widgets['axes']['sketch'].plot(
-            [np.nan], [np.nan], **self.HIGHLIGHT_DOT_PARAMS)[0]
-        self.graph_widgets['highlight_dot']['sketch_zoom'] = self.graph_widgets['axes']['sketch_zoom'].plot(
-            [np.nan], [np.nan], **self.HIGHLIGHT_DOT_PARAMS)[0]
-        self.graph_widgets['highlight_circle']['sketch'] = self.graph_widgets['axes']['sketch'].plot(
-            [np.nan], [np.nan], **self.HIGHLIGHT_CIRCLE_PARAMS)[0]
-        self.graph_widgets['highlight_circle']['sketch_zoom'] = self.graph_widgets['axes']['sketch_zoom'].plot(
-            [np.nan], [np.nan], **self.HIGHLIGHT_CIRCLE_PARAMS)[0]
-
-    def fill_controls(self):
-        # Fill non-graphic controls
-        self.combobox_sketches.setDisabled(False)
-        self.combobox_sketches.addItems([f'Sketch {i:03d}'
-                                         for i, _ in enumerate(self.sketches)])
-
-        self.list_labels.addItems(self.get_sketch_labels())
-
-    def connect_canvas(self):
-        self.graph_widgets['canvas']['sketch'].mpl_connect('button_press_event', self.sketch_click)
-
-    def connect_label_buttons(self, controls_cfg: dict):
-        ll = self.list_labels
-        if controls_cfg['buttons']['next_label']:
-            self.widgets['buttons']['next_label'].setEnabled(True)
-            self.widgets['buttons']['next_label'].clicked.connect(lambda:
-                                                                  ll.setCurrentRow((ll.currentRow() + 1) % ll.count()))
-
-        if controls_cfg['buttons']['previous_label']:
-            self.widgets['buttons']['previous_label'].setEnabled(True)
-            self.widgets['buttons']['previous_label'].clicked.connect(lambda:
-                                                                      ll.setCurrentRow(
-                                                                          (ll.currentRow() - 1) % ll.count()))
-
-    def update_sketch(self, current_label_name: str = None):
-        # Updates labels on the sketch
-        sketch_labels = self.get_sketch_labels()
-
-        if current_label_name:
-            (x, y) = np.asarray(sketch_labels[current_label_name], dtype=np.float32)
-        else:
-            x, y = (np.nan, np.nan)
-
-        self.graph_widgets['highlight_dot']['sketch'].set_data([x], [y])
-        self.graph_widgets['highlight_circle']['sketch'].set_data([x], [y])
-        # zoom
-        self.graph_widgets['highlight_dot']['sketch_zoom'].set_data([x], [y])
-        self.graph_widgets['highlight_circle']['sketch_zoom'].set_data([x], [y])
-        if not np.any(np.isnan([x, y])):
-            self.graph_widgets['axes']['sketch_zoom'].set_xlim([x - self.sketch_zoom_dx, x + self.sketch_zoom_dx])
-            self.graph_widgets['axes']['sketch_zoom'].set_ylim([y - self.sketch_zoom_dy, y + self.sketch_zoom_dy])
-        self.graph_widgets['axes']['sketch_zoom'].invert_yaxis()
-
-        self.graph_widgets['canvas']['sketch'].draw()
-
-    def set_sketch_zoom(self):
-        sketch = self.get_sketch_image()
-        self.sketch_zoom_dx = np.max(np.shape(sketch)) * self.sketch_zoom_scale
-        self.sketch_zoom_dy = np.max(np.shape(sketch)) * self.sketch_zoom_scale
-
-    def get_sketch_image(self):
-        if not self.sketches_loaded:
-            logger.log(logging.WARNING, "Attempted to get sketch image when no sketches are loaded")
-            return None
-        return self.sketches[self.current_sketch_idx]['sketch'].astype(np.uint8)
-
-    def get_sketch_labels(self):
-        if not self.sketches_loaded:
-            logger.log(logging.WARNING, "Attempted to get sketch labels when no sketches are loaded")
-            return None
-        return self.sketches[self.current_sketch_idx]['sketch_label_locations']
-
-    def get_sketch_label_coordinates(self):
-        return np.array(list(self.get_sketch_labels().values()), dtype=np.float64)
+    def display_selection(self, name):
+        if self.sketch is None or name not in self.sketch.locations:
+            return
+        with QSignalBlocker(self.list_labels):
+            self.list_labels.setCurrentRow(list(self.sketch.locations).index(name))
+        x, y = self.sketch.locations[name]
+        for highlight in self.highlights:
+            highlight.set_data([x], [y])
+        radius = max(self.sketch.image.shape[:2]) * self.sketch_zoom_scale
+        self.zoom_axes.set_xlim(x - radius, x + radius)
+        self.zoom_axes.set_ylim(y + radius, y - radius)
+        self.canvas.draw_idle()
+        self.list_labels.clearFocus()
 
     def sketch_click(self, event):
-        if event.button == 1:
-            x = event.xdata
-            y = event.ydata
-            if (x is not None) & (y is not None):
-                label_coordinates = self.get_sketch_label_coordinates()
-                dists = ((x - label_coordinates[:, 0]) ** 2 + (y - label_coordinates[:, 1]) ** 2) ** 0.5
-                label_index = np.argmin(dists)
-                self.list_labels.setCurrentRow(label_index)
-
-    def clear_sketch(self):
-        for ax_key in ['sketch', 'sketch_zoom']:
-            self.graph_widgets['axes'][ax_key].clear()
+        if event.button == 1 and event.xdata is not None and event.ydata is not None:
+            self.point_selected.emit(event.xdata, event.ydata)

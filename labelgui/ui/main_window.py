@@ -1,24 +1,14 @@
+"""Qt presentation and event bindings for a headless LabelingSession."""
 import logging
-import os
-import sys
-import time
+import math
 from pathlib import Path
-from typing import List, Dict, Optional
-import threading
-from concurrent.futures import ThreadPoolExecutor
 
-import numpy as np
-import paho.mqtt.client as mqtt
-import pandas as pd
-import svidreader
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QMdiArea, \
-    QFileDialog, \
-    QMainWindow
-from bbo import label_lib, path_management as bbo_pm
-from paho.mqtt.subscribeoptions import SubscribeOptions
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox
 
-from labelgui import misc as labelgui_misc
+from labelgui.core.configuration import job_config_path
+from labelgui.core.session import LabelingSession
+from labelgui.core.synchronization import TimeSynchronizer
 from labelgui.select_user import SelectUserWindow
 from .controls_dock import ControlsDock
 from .sketch_dock import SketchDock
@@ -30,750 +20,165 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     mqtt_message_signal = Signal(float)
 
-    def __init__(self, drive: Path, file_config=None, parent=None, sync: str | bool = False):
-        super(MainWindow, self).__init__(parent)
-
-        self.save_thread = ThreadPoolExecutor(max_workers=1)
-
-        self.user = None
-        self.drive = drive
-        self.cfg = {}
-        self.file_config = None
-        self.mqtt_client = None
-        self.sync = sync
-
-        self.cameras: List[Dict] = []
-        self.subwindows: Dict = {}
-        self.labels = label_lib.get_empty_labels()
-        self.ref_labels = label_lib.get_empty_labels()
-        self.neighbor_points = {}
-        self.auto_save_counter = 0
-
-        # Docks
-        self.mdi = QMdiArea()
+    def __init__(self, drive: Path = None, file_config=None, parent=None,
+                 sync: str | bool = False, *, session=None):
+        super().__init__(parent)
+        if session is None:
+            if drive is None or not Path(drive).is_dir():
+                raise ValueError('The base data directory does not exist')
+            user, job, accepted = SelectUserWindow.start(Path(drive))
+            if not accepted:
+                raise SystemExit(0)
+            config_path = Path(file_config) if file_config else job_config_path(drive, user, job)
+            session = LabelingSession.open(drive, user, config_path)
+        self.session = session
+        self.subwindows = {}
+        self.camera_workspace = QMainWindow(self)
+        self.camera_workspace.setWindowFlags(Qt.WindowType.Widget)
+        self.camera_workspace.setDockOptions(QMainWindow.DockOption.AllowNestedDocks
+                                            | QMainWindow.DockOption.AllowTabbedDocks
+                                            | QMainWindow.DockOption.AnimatedDocks)
+        self._camera_layout = 'tab_view'
         self.dock_sketch = SketchDock()
         self.dock_controls = ControlsDock()
-
-        # Menus
-        self.session_menu = self.menuBar().addMenu("&File")
-        self.session_menu.addAction("Save Labels As...", self.save_labels_as)
-
-        self.view_menu = self.menuBar().addMenu("&View")
-        self.view_menu.addAction("&Tab (single cam view)", lambda: self.mdi_view_select("tab_view"))
-        self.view_menu.addAction("&Tile", lambda: self.mdi_view_select("tile_view"))
-        self.view_menu.addAction("&Cascade", lambda: self.mdi_view_select("cascade_view"))
-
-        self.view_menu.addSection("Reference labels")
-        self.checkbox_disp_ref_annotated = self.view_menu.addAction("&Only Display Annotated", self.viewer_change_frame)
-        self.checkbox_disp_ref_annotated.setCheckable(True)
-        self.checkbox_disp_ref_annotated.setChecked(True)
-
-        # Config
-        self.load_cfg()
-
-        # Load some params from config
-        self.d_time = self.cfg['d_time']
-        self.min_time = int(self.cfg['min_time'])
-        self.max_time = int(self.cfg['max_time'])
-        self.current_time = None
-        self.times = []
-        self.cam_times = []
-        self.dock_sketch.sketch_zoom_scale = self.cfg.get('sketch_zoom_scale', 0.1)
-
-        # Files
-        self.dataset_name = self.cfg['dataset_name'] if self.cfg['dataset_name'] \
-            else Path(self.cfg['recording_folder']).name
-        self.labels_folder = None  # Output folder to store labels/results
-
-        # Data load status
-        self.recordings_loaded = False
-        self.labels_loaded = False
-        self.gui_loaded = False
-
-        # Loaded data
-        self.init_files_folders()
-        self.dock_sketch.load_sketches(sketch_files=[Path(file)
-                                                     for file in self.cfg['sketch_files']])
-
-        load_labels_file = self.cfg["load_labels_file"]
-        self.load_labels(labels_file=Path(load_labels_file) if isinstance(load_labels_file, str) else None)
-        self.load_ref_labels()
-
-        self.dock_sketch.init_sketch()
-        self.init_viewer()
-        self.fill_controls()
-        self.connect_controls()
-        self.mqtt_connect()
-
-        # GUI layout
-        self.setCentralWidget(self.mdi)
-        self.set_docks_layout()
-        self.showMaximized()
-        self.setFocus()
-        self.setWindowTitle(f"Labeling GUI - {self.dataset_name}")
-
-        self.gui_loaded = True
-
-    # Init functions
-    def init_files_folders(self):
-        recording_folder = Path(self.cfg['recording_folder'])
-        rec_files = (
-            [bbo_pm.decode_path(recording_folder / i).expanduser().resolve() for i in
-             self.cfg['recording_filenames']]
-        )
-        self.load_recordings(rec_files)
-        self.load_times()
-
-        # create folder structure / save backup / load last frame
-        self.init_assistant_folders(recording_folder)
-        self.init_autosave()
-        self.restore_last_frame_time()
-
-    def load_cfg(self):
-        if os.path.isdir(self.drive):
-            self.user, job, correct_exit = SelectUserWindow.start(self.drive)
-            if correct_exit:
-                file_loc = self.drive / 'data' / 'user' / self.user
-                file_config = file_loc / 'labelgui_cfg.yml'
-                if job is not None:
-                    if (file_loc / 'jobs' / f'{job}.yml').is_file():
-                        file_config = file_loc / 'jobs' / f'{job}.yml'
-                    elif (file_loc / 'jobs' / f'{job}.py').is_file():
-                        file_config = file_loc / 'jobs' / f'{job}.py'
-
-                self.cfg = labelgui_misc.load_cfg(file_config)
-            else:
-                sys.exit()
-        else:
-            logger.log(logging.ERROR, 'Server is not mounted')
-            sys.exit()
-        logger.log(logging.INFO, "++++++++++++++++++++++++++++++++++++")
-        logger.log(logging.INFO, f"file_config: {file_config}")
-        logger.log(logging.INFO, "++++++++++++++++++++++++++++++++++++")
-        self.file_config = file_config
-
-    def load_labels(self, labels_file: Optional[Path] = None):
-        if labels_file is None:
-            labels_file = self.labels_folder / 'labels.yml'
-
-        if labels_file.exists():
-            logger.log(logging.INFO, f'Loading labels from: {labels_file}')
-            self.labels = label_lib.load(labels_file, v0_format=False)
-            self.labels_loaded = True
-
-            # Backing up the labels file after reading/loading it. Correct loading -> file 'healthy' -> back it up
-            backup_folder = self.labels_folder / 'backup'
-            labelgui_misc.copy_file(labels_file, backup_folder)
-        else:
-            logger.log(logging.WARNING, f'Autoloading failed. Labels file {labels_file} does not exist.')
-
-    def load_ref_labels(self):
-        ref_labels_file = self.cfg['reference_labels_file']
-        if isinstance(ref_labels_file, bool) and ref_labels_file:
-            self.cfg[
-                'reference_labels_file'] = ref_labels_file = self.drive / "data" / "references" / f"{self.dataset_name}.yml"
-        elif isinstance(ref_labels_file, str):
-            ref_labels_file = Path(ref_labels_file)
-        else:
-            return
-
-        if ref_labels_file.is_file():
-            self.ref_labels = label_lib.load(ref_labels_file, v0_format=False)
-        else:
-            logger.log(logging.WARNING, f" Not Found: reference labels file {ref_labels_file.as_posix()} ")
-
-    def load_recordings(self, files: List[Path]):
-        cameras = []
-        logger.log(logging.DEBUG, svidreader.__file__)
-        for file in files:
-            logger.log(logging.INFO, f"File name: {file.as_posix()}")
-            reader = svidreader.get_reader(file.as_posix(), backend="iio", cache=True)
-            header = labelgui_misc.read_video_meta(reader)
-            cam = {
-                'file_name': file.name,
-                'reader': reader,
-                'header': header,
-                'x_lim_prev': (0, header['sensorsize'][0]),
-                'y_lim_prev': (0, header['sensorsize'][1]),
-                'rotate': False,
-            }
-            cameras.append(cam)
-
-        self.recordings_loaded = True
-        self.cameras = cameras
-
-    def load_times(self):
-        if self.recordings_loaded:
-            num_frames = self.get_n_frames()
-
-            for cam_idx, cam in enumerate(self.cameras):
-                video_times_dict = self.cfg["video_times"].get(cam_idx, {})
-                if 'file' in video_times_dict:
-                    # TODO: Needs testing
-                    times_pd = pd.read_csv(video_times_dict['file'], comment="#")
-                    cam_times = np.array(times_pd.iloc[:, 0]).astype(float)  # Loading times from first column
-                    assert len(cam_times) == num_frames[cam_idx], (f"video times in the csv file "
-                                                                   f"do not match the number of frames in the recording {cam_idx}")
-                else:
-                    cam_times = np.arange(num_frames[cam_idx]) / video_times_dict.get('fps',
-                                                                                      cam['header']['fps'])
-                cam_times += video_times_dict.get('offset', 0)
-                self.cam_times.append(list(cam_times))
-
-            # Concatenate and remove duplicates
-            times = set(sum(self.cam_times, []))
-            times = np.asarray(sorted(times))
-            times = times[(times >= self.min_time) & (times < self.max_time)]
-            logger.log(logging.INFO, f"{len(times)} VALID TIMEPOINTS SELECTED")
-            self.times = times.tolist()
-            self.current_time = self.times[0]
-
-    def restore_last_frame_time(self):
-        # Retrieve last frame from 'exit' file
-        file_exit_status = self.labels_folder / 'exit_status.npy'
-        if file_exit_status.is_file():
-            exit_status = np.load(file_exit_status.as_posix(), allow_pickle=True)[()]
-            if exit_status.get('i_time', self.times[0]) in self.times:
-                self.current_time = exit_status.get('i_time', self.times[0])
-
-    def init_assistant_folders(self, recording_folder: Path):
-        # folder structure
-        userfolder = self.drive / 'user' / self.user
-        os.makedirs(userfolder, exist_ok=True)
-        results_folder = userfolder / self.dataset_name
-        os.makedirs(results_folder, exist_ok=True)
-        self.labels_folder = results_folder.expanduser().resolve()
-
-        # The configuration and labels will be saved in the Backup folder on starting the GUI.
-        backup_folder = self.labels_folder / 'backup'
-        if not backup_folder.is_dir():
-            os.mkdir(backup_folder)
-        labelgui_misc.archive_cfg(self.file_config, backup_folder)
-
-    def init_autosave(self):
-        """Autosave folder to save labels (with lower frequency/ less often).
-        See config file for frequency information"""
-
-        autosave_folder = self.labels_folder / 'autosave'
-        if not autosave_folder.is_dir():
-            os.makedirs(autosave_folder)
-
-    # Init gui functions
-    def init_viewer(self):
-
-        # Open windows
-        for cam_idx, cam in enumerate(self.cameras):
-            if cam_idx in self.cfg['allowed_cams']:
-                window = ViewerSubWindow(index=cam_idx,
-                                         reader=cam['reader'],
-                                         parent=self.mdi)
-                window.setWindowTitle(f"{cam['file_name']} ({cam_idx})")
-                window.redraw_frame()
-                self.subwindows[cam_idx] = window
-
-        self.mdi.setViewMode(QMdiArea.ViewMode.TabbedView)
-        self.set_time(self.current_time, time_field_update=False)
-
-    def fill_controls(self):
-        # Sketches dock
-        self.dock_sketch.fill_controls()
-
-        # Controls dock
-        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
-        self.dock_controls.widgets['fields']['d_time'].setText(str(self.d_time))
-
-    def connect_controls(self):
-        controls_cfg = self.cfg['controls']
-        list_labels = self.dock_sketch.list_labels
-
-        # Sketches dock
-        self.dock_sketch.connect_canvas()
-        self.dock_sketch.connect_label_buttons(controls_cfg)
-        self.dock_sketch.combobox_sketches.currentIndexChanged.connect(self.sketch_select)
-        list_labels.currentItemChanged.connect(self.label_select)
-        list_labels.setCurrentRow(0)
-
-        # Control dock
-        if controls_cfg['buttons']['save_labels']:
-            self.dock_controls.widgets['buttons']['save_labels'].setEnabled(True)
-            self.dock_controls.widgets['buttons']['save_labels'].clicked.connect(
-                lambda: self.save_labels(None))
-        if controls_cfg['buttons']['zoom_out']:
-            self.dock_controls.widgets['buttons']['zoom_out'].setEnabled(True)
-            self.dock_controls.widgets['buttons']['zoom_out'].clicked.connect(
-                self.viewer_zoom_reset)
-        self.dock_controls.widgets['buttons']['rotate'].setEnabled(True)
-        self.dock_controls.widgets['buttons']['rotate'].clicked.connect(self.viewer_rotate)
-        self.dock_controls.widgets['buttons']['single_label_mode'].setEnabled(
-            controls_cfg['buttons']['single_label_mode'])
-
-        if controls_cfg['buttons']['previous_time']:
-            self.dock_controls.widgets['buttons']['previous_time'].setEnabled(True)
-            self.dock_controls.widgets['buttons']['previous_time'].clicked.connect(self.goto_previous_time)
-        if controls_cfg['buttons']['next_time']:
-            self.dock_controls.widgets['buttons']['next_time'].setEnabled(True)
-            self.dock_controls.widgets['buttons']['next_time'].clicked.connect(self.goto_next_time)
-
-        if controls_cfg['fields']['current_time']:
-            self.dock_controls.widgets['fields']['current_time'].setEnabled(True)
-            self.dock_controls.widgets['fields']['current_time'].editingFinished.connect(
-                self.field_current_time_changed)
-        if controls_cfg['fields']['d_time']:
-            self.dock_controls.widgets['fields']['d_time'].setEnabled(True)
-            self.dock_controls.widgets['fields']['d_time'].editingFinished.connect(self.set_d_time)
-
-        # Viewer
-        for _, subwin in self.subwindows.items():
-            subwin.connect_controls()
-            subwin.mouse_clicked_signal.connect(self.viewer_click)
-            subwin.view_box.mouse_wheel_signal.connect(self.viewer_wheel_event)
-
-        # mqtt
-        self.mqtt_message_signal.connect(lambda x: self.set_time(x, mqtt_publish=False))
-
-    # Viewer functions
-    def viewer_change_frame(self):
-        self.trigger_autosave_event()
-        self.viewer_clear_labels()
-
-        self.viewer_update_images()
-        self.viewer_plot_labels()
-        self.viewer_plot_ref_labels()
-
-    def viewer_update_images(self):
-        for _, subwin in self.subwindows.items():
-            subwin.redraw_frame()
-
-    def viewer_plot_labels(self, label_names=None, current_label_name=None):
-        if label_names is None:
-            label_names = label_lib.get_labels(self.labels)
-        if current_label_name is None:
-            current_label_name = self.get_current_label()
-
-        for cam_idx, subwin in self.subwindows.items():
-            frame_idx = subwin.frame_idx
-            logger.log(logging.INFO, "<" * 10 + f" CAM: {cam_idx} > FRAME: {frame_idx} " + ">" * 10)
-            if frame_idx is None:
-                subwin.clear_all_labels()
-                subwin.label_labeler.setText("")
-                continue
-
-            subwin.label_labeler.setText(
-                ", ".join(label_lib.get_frame_labelers(self.labels, subwin.frame_idx))
-            )
-            # Plot each label
-            for label_name in label_names:
-                label_dict = self.labels['labels'].get(label_name, {})
-
-                if frame_idx in label_dict and \
-                        not np.any(np.isnan(label_dict[frame_idx]['coords'][cam_idx])):
-                    # Plot actual/annotated labels
-                    point = label_dict[frame_idx]['coords'][cam_idx, :]
-                    labeler = self.labels['labeler_list'][label_dict[frame_idx]['labeler'][cam_idx]]
-                    logger.log(logging.INFO, f"label\t{label_name}\t{frame_idx}\t{labeler}\t{point}")
-                    subwin.draw_label(point[0], point[1], label_name,
-                                      current_label=current_label_name == label_name)
-                    subwin.clear_label(label_name, label_type='guess_label')
-
-                else:
-                    # Plot a guess position based on previous or/and next frames
-                    point = np.full((1, 2), np.nan)
-
-                    # Try to take mean of a symmetrical situation
-                    for offs in range(1, 4):
-                        if frame_idx - offs in label_dict and \
-                                not np.any(np.isnan(label_dict[frame_idx - offs]['coords'][cam_idx])) and \
-                                frame_idx + offs in label_dict and \
-                                not np.any(np.isnan(label_dict[frame_idx + offs]['coords'][cam_idx])):
-                            point = np.nanmean([point,
-                                                label_dict[frame_idx - offs]['coords'][(cam_idx,),],
-                                                label_dict[frame_idx + offs]['coords'][(cam_idx,),]
-                                                ], axis=0)
-                            break
-
-                    if np.any(np.isnan(point)):
-                        # Fill from one closest neighbor
-                        for offs in [-1, 1, -2, 2, -3, 3]:
-                            if frame_idx + offs in label_dict:
-                                point = label_dict[frame_idx + offs]['coords'][(cam_idx,),]
-                                break
-
-                    if ~np.any(np.isnan(point)):
-                        subwin.draw_label(point[0][0], point[0][1], label_name,
-                                          label_type='guess_label',
-                                          current_label=current_label_name == label_name)
-
-    def viewer_plot_ref_labels(self):
-        # Plot reference labels
-
-        for cam_idx, subwin in self.subwindows.items():
-            frame_idx = subwin.frame_idx
-            if frame_idx is None:
-                continue
-
-            display_only_annotated = self.checkbox_disp_ref_annotated.isChecked()
-            ref_label_names = self.ref_labels['labels'].keys()
-
-            if display_only_annotated:
-                label_names = label_lib.get_labels_from_frame(self.labels, frame_idx)
-                ref_label_names = list(set(ref_label_names) & set(label_names))
-
-            for ln in ref_label_names:
-                if frame_idx in self.ref_labels['labels'][ln] and \
-                        not np.any(np.isnan(self.ref_labels['labels'][ln][frame_idx]['coords'][cam_idx])):
-
-                    ref_label_dict = self.ref_labels['labels'][ln]
-                    point = ref_label_dict[frame_idx]['coords'][cam_idx]
-                    subwin.draw_label(point[0], point[1], ln, label_type="ref_label")
-
-                    # Draw correspondence line between ref label and annotation
-                    label_dict = self.labels['labels'].get(ln, {})
-                    if frame_idx in label_dict and \
-                            not np.any(np.isnan(label_dict[frame_idx]['coords'][cam_idx])):
-                        line_coords = np.concatenate((label_dict[frame_idx]['coords'][(cam_idx,), :],
-                                                      ref_label_dict[frame_idx]['coords'][(cam_idx,), :]), axis=0)
-                        logger.log(logging.DEBUG, f"Drawing line, {line_coords.shape}, {line_coords}")
-                        subwin.draw_line(*line_coords.T, line_name=ln, line_type='error_line')
-
-    def viewer_click(self, x: float, y: float, cam_frame_idx: int, cam_idx: int, action: str = 'create_label'):
-        current_label_name = self.get_current_label()
-
-        match action:
-            case 'select_label':
-                coords = np.array([x, y], dtype=np.float64)
-                point_dists = []
-                frame_labels = label_lib.get_labels_from_frame(self.labels, frame_idx=cam_frame_idx)
-                frame_guess_labels = self.subwindows[cam_idx].get_labels('guess_label')
-                if not len(frame_labels) and not len(frame_guess_labels):
-                    return
-
-                label_names = list(frame_labels.keys())
-                for ln, ld in frame_labels.items():
-                    if len(ld) > cam_idx and not np.any(np.isnan(ld[cam_idx])):
-                        point_dists.append(
-                            np.linalg.norm(ld[cam_idx] - coords))
-                    else:
-                        point_dists.append(np.inf)
-
-                for gln, gld in frame_guess_labels.items():
-                    if gln not in label_names:
-                        label_names.append(gln)
-                        point_dists.append(np.inf)
-
-                    point_dists[label_names.index(gln)] = np.linalg.norm(np.hstack(gld) - coords)
-
-                self.set_current_label(label_names[np.argmin(point_dists)])
-
-            case 'select_ref_label':
-                frame_ref_labels = self.subwindows[cam_idx].get_labels(label_type='ref_label')
-                if not len(frame_ref_labels):
-                    return
-
-                coords = np.array([x, y], dtype=np.float64)
-                point_dists = []
-                for rln, rld in frame_ref_labels.items():
-                    point_dists.append(np.linalg.norm(np.hstack(rld) - coords))
-                ref_label_names = list(frame_ref_labels.keys())
-                self.set_current_label(ref_label_names[np.argmin(point_dists)])
-
-            case 'create_label':
-                self.add_label([x, y], current_label_name, cam_frame_idx, cam_idx)
-                self.viewer_plot_labels(label_names=[current_label_name])
-                if self.dock_controls.widgets['buttons']['single_label_mode'].isChecked():
-                    self.goto_next_time()
-
-            case 'auto_label':
-                # TODO:
-                pass
-
-            case 'delete_label':
-                if self.user not in self.labels['labeler_list']:
-                    self.labels['labeler_list'].append(self.user)
-
-                label_dict = self.labels['labels'].get(current_label_name, {})
-                # Only delete the label if it already exists
-                if (cam_frame_idx in label_dict and
-                        not np.any(np.isnan(label_dict[cam_frame_idx]['coords'][cam_idx, :]))):
-                    label_dict[cam_frame_idx]['coords'][cam_idx, :] = np.nan
-                    # For synchronization, deletion time and user must be recorded
-                    label_dict[cam_frame_idx]['point_times'][cam_idx] = time.time()
-                    label_dict[cam_frame_idx]['labeler'][cam_idx] = self.labels['labeler_list'].index(self.user)
-
-                    self.subwindows[cam_idx].clear_label(label_name=current_label_name,
-                                                         label_type='label')
-
-                if self.dock_controls.widgets['buttons']['single_label_mode'].isChecked():
-                    self.goto_next_time()
-
-            case _:
-                logger.log(logging.WARNING, f'Unknown action {action} for cam_idx {cam_idx} '
-                                            f'and location {x}, {y}')
-
-    def viewer_rotate(self):
-        # Rotate view in all the subwindows
-        for _, subwin in self.subwindows.items():
-            subwin.rotate_view(rot_angle=(subwin.rot_angle + 90) % 360)
-
-    def viewer_clear_labels(self):
-        for cam_idx, subwin in self.subwindows.items():
-            subwin.clear_all_labels()
-
-    def viewer_zoom_reset(self):
-        # Reset view in all the subwindows
-        for _, subwin in self.subwindows.items():
-            # Some related pyqtgraph functions are not behaving well, specifically when the window size is
-            # changed/maximized/minimized. So, it is necessary to reset the rotation before resetting the view range.
-            current_angle = subwin.rot_angle
-            subwin.rotate_view(rot_angle=0)
-            subwin.rotate_view(rot_angle=current_angle)
-
-            subwin.plot_wget.autoRange()
-
-    # Mqtt functions
-    def mqtt_connect(self):
-        if isinstance(self.sync, bool):
-            return
-        try:
-            self.mqtt_client = mqtt.Client(protocol=mqtt.MQTTv5)
-            self.mqtt_client.on_message = self.mqtt_on_message
-            self.mqtt_client.connect("127.0.0.1", 1883, 60)
-            mqtt_options = SubscribeOptions(noLocal=True)
-            self.mqtt_client.subscribe(self.sync, options=mqtt_options)
-            self.mqtt_client.loop_start()
-            logger.log(logging.INFO, f'MQTT connected to {self.sync}')
-        except ConnectionRefusedError:
-            logger.log(logging.ERROR, "No connection to MQTT server.")
-            self.mqtt_client = None
-
-    def mqtt_publish(self):
-        if self.mqtt_client is not None:
-            try:
-                logger.log(logging.DEBUG, "Publishing to MQTT server.")
-                self.mqtt_client.publish("bbo/sync/t", payload=str(self.current_time))
-            except ConnectionRefusedError:
-                logger.log(logging.ERROR, "No connection to MQTT server.")
-                self.mqtt_client = None
-
-    def mqtt_on_message(self, client, userdata, message):
-        # TODO: Test this function
-        logger.log(logging.INFO, f"Received message '{message.payload.decode()}' on topic '{message.topic}'")
-        match message.topic:
-            case "bbo/sync/t":
-                msg_time = float(message.payload.decode())
-                # Intermediate signal is implemented to avoid issues with Qt components, since Qt components are not thread safe.
-                self.mqtt_message_signal.emit(msg_time)
-
-    # Getter functions
-    def get_current_time(self):
-        return self.current_time
-
-    def get_n_frames(self):
-        return [len(cam["reader"]) for cam in self.cameras]
-
-    def get_fps(self):
-        return [cam["header"]["fps"] for cam in self.cameras]
-
-    def get_sensor_sizes(self):
-        return [cam["header"]["sensorsize"] for cam in self.cameras]
-
-    def get_x_res(self):
-        return [ss[0] for ss in self.get_sensor_sizes()]
-
-    def get_y_res(self):
-        return [ss[1] for ss in self.get_sensor_sizes()]
-
-    def get_valid_time(self, input_time: float):
-        """
-            Returns a valid time that is closest to the given 'input_time'
-            # TODO: add more documentation or make it better
-        """
-        times_arr = np.asarray(self.times)
-        current_time_idx = self.times.index(self.current_time)
-        diff_sign = int(np.sign(input_time - self.current_time))
-
-        if diff_sign > 0:
-            search_slice = times_arr[current_time_idx:]
-        else:
-            search_slice = times_arr[:current_time_idx + 1][::-1]
-
-        if len(search_slice) > 0:
-            diff_idx = np.argmin(np.abs(search_slice - input_time))
-            return self.times[current_time_idx + (diff_sign * diff_idx)]
-        else:
-            return self.current_time
-
-    def get_current_label(self):
-        selected_label = self.dock_sketch.list_labels.currentItem()
-        if selected_label is not None:
-            return selected_label.text()
-        else:
-            return None
-
-    # Setter functions
-    def set_time(self, valid_input_time: float, mqtt_publish=True, time_field_update=True):
-        if valid_input_time not in self.times:
-            return
-
-        self.current_time = valid_input_time
-
-        for cam_idx, subwin in self.subwindows.items():
-            frame_idx = np.argmin(np.abs(np.array(self.cam_times[cam_idx])-valid_input_time))
-            subwin.frame_idx =frame_idx
-
-        if mqtt_publish:
-            self.mqtt_publish()
-
-        # Viewer
-        self.viewer_change_frame()
-        if time_field_update:
-            self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.current_time, 6)))
-
-    def set_d_time(self):
-        self.d_time = float(self.dock_controls.widgets['fields']['d_time'].text())
-        self.dock_controls.widgets['fields']['d_time'].clearFocus()
-
-    def set_docks_layout(self):
-        # Right dock area
+        self.synchronizer = TimeSynchronizer(sync, self.mqtt_message_signal.emit)
+        self.mqtt_message_signal.connect(lambda t: self.set_time(t, mqtt_publish=False))
+        self._build_menus()
+        self._build_viewers()
+        self._connect_controls()
+        self.setCentralWidget(self.camera_workspace)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_sketch)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_controls)
+        self.resizeDocks([self.dock_sketch, self.dock_controls], [600, 600], Qt.Orientation.Horizontal)
+        self.setWindowTitle(f'Labeling GUI - {session.dataset_name}')
+        self._render_sketch()
+        self._render_frame()
+        self.synchronizer.connect()
+        self.save_timer = QTimer(self)
+        self.save_timer.timeout.connect(self._check_saves)
+        self.save_timer.start(500)
+        self.showMaximized()
+        self.setFocus()
 
-        self.resizeDocks([self.dock_sketch, self.dock_controls],
-                         [600, 600], Qt.Orientation.Horizontal)
+    def _build_menus(self):
+        self.menuBar().addMenu('&File').addAction('Save Labels As...', self.save_labels_as)
+        menu = self.menuBar().addMenu('&View')
+        menu.addAction('&Tab (single cam view)', lambda: self.arrange_cameras('tab_view'))
+        menu.addAction('&Tile', lambda: self.arrange_cameras('tile_view'))
+        menu.addAction('&Dock All Cameras', self.dock_all_cameras)
+        menu.addSection('Reference labels')
+        self.checkbox_disp_ref_annotated = menu.addAction('&Only Display Annotated')
+        self.checkbox_disp_ref_annotated.setCheckable(True)
+        self.checkbox_disp_ref_annotated.setChecked(self.session.only_annotated_references)
+        self.checkbox_disp_ref_annotated.toggled.connect(self._reference_filter_changed)
 
-    def trigger_autosave_event(self):
-        if self.cfg['auto_save']:
-            self.auto_save_counter = self.auto_save_counter + 1
-            if np.mod(self.auto_save_counter, self.cfg['auto_save_N0']) == 0:
-                file = self.labels_folder / 'labels.yml'  # this is equal to self.labels_file
-                self.save_labels(file)
-                logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
-            if np.mod(self.auto_save_counter, self.cfg['auto_save_N1']) == 0:
-                file = self.labels_folder / 'autosave' / 'labels.yml'
-                self.save_labels(file)
-                logger.log(logging.INFO, 'Automatically saved labels ({:s})'.format(file.as_posix()))
+    def _build_viewers(self):
+        for index, camera in enumerate(self.session.cameras):
+            if index in self.session.config['allowed_cams']:
+                window = ViewerSubWindow(index=index, camera=camera, parent=self.camera_workspace)
+                window.setWindowTitle(f'{camera.path.name} ({index})')
+                window.connect_controls()
+                window.mouse_clicked_signal.connect(self.viewer_click)
+                window.view_box.mouse_wheel_signal.connect(self.viewer_wheel_event)
+                window.key_pressed_signal.connect(self._handle_shortcut)
+                self.subwindows[index] = window
+                self.camera_workspace.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, window)
+        self.arrange_cameras(self._camera_layout)
 
-                self.auto_save_counter = 0
+    def _connect_controls(self):
+        cfg = self.session.config['controls']
+        sketch = self.dock_sketch
+        sketch.sketch_zoom_scale = self.session.config.get('sketch_zoom_scale', 0.1)
+        sketch.set_sketch_names([f'Sketch {i:03d}' for i in range(len(self.session.sketches))])
+        sketch.connect_label_buttons(cfg)
+        sketch.label_selected.connect(self.set_current_label)
+        sketch.sketch_selected.connect(self.sketch_select)
+        sketch.point_selected.connect(self._sketch_point_selected)
+        actions = {'save_labels': self.save_labels, 'zoom_out': self.viewer_zoom_reset,
+                   'rotate': self.viewer_rotate, 'previous_time': self.goto_previous_time,
+                   'next_time': self.goto_next_time}
+        for name, callback in actions.items():
+            button = self.dock_controls.widgets['buttons'][name]
+            button.setEnabled(cfg['buttons'].get(name, name == 'rotate'))
+            button.clicked.connect(lambda checked=False, action=callback: action())
+        single = self.dock_controls.widgets['buttons']['single_label_mode']
+        single.setEnabled(cfg['buttons'].get('single_label_mode', True))
+        single.setChecked(self.session.single_label_mode)
+        single.toggled.connect(self._single_label_mode_changed)
+        for name, callback in (('current_time', self.field_current_time_changed),
+                               ('d_time', self.set_d_time)):
+            field = self.dock_controls.widgets['fields'][name]
+            field.setEnabled(cfg['fields'].get(name, True))
+            field.editingFinished.connect(callback)
+        self.dock_controls.widgets['fields']['d_time'].setText(str(self.session.d_time))
 
-    def set_current_label(self, label: str or int):
-        match label:
-            case int():
-                pass
-            case str():
-                if label in self.dock_sketch.get_sketch_labels():
-                    label = list(self.dock_sketch.get_sketch_labels().keys()).index(label)
-                else:
-                    logger.log(logging.WARNING, f"Label name {label} not in the current sketch!")
-                    return
-            case _:
-                logger.log(logging.WARNING, f"Input {label} has unknown type")
-                return
+    def _render_sketch(self):
+        self.dock_sketch.display_sketch(self.session.sketch, self.session.current_sketch_index,
+                                       self.session.current_label)
 
-        self.dock_sketch.list_labels.setCurrentRow(label)
+    def _render_selection(self):
+        self.dock_sketch.display_selection(self.session.current_label)
+        for window in self.subwindows.values():
+            window.set_current_label(self.session.current_label)
 
-    # Others
-    def add_label(self, coords, label_name, fr_idx, cam_idx):
-        data_shape = (len(self.cameras), 2)
+    def _render_frame(self, images=True):
+        for camera, window in self.subwindows.items():
+            window.frame_idx = self.session.frame_index(camera)
+            if images:
+                window.redraw_frame()
+            window.clear_all_labels()
+            view = self.session.frame_annotations(camera)
+            window.label_labeler.setText(', '.join(view.labelers))
+            for point in (*view.points, *view.references):
+                window.draw_label(*point.coords, point.name, label_type=point.kind,
+                                  current_label=point.kind != 'ref_label' and point.name == self.session.current_label)
+            actual = {p.name: p.coords for p in view.points if p.kind == 'label'}
+            for reference in view.references:
+                if reference.name in actual:
+                    point = actual[reference.name]
+                    window.draw_line([point[0], reference.coords[0]], [point[1], reference.coords[1]],
+                                     reference.name)
+        self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.session.current_time, 6)))
+        self._render_selection()
 
-        label_dict = self.labels['labels'].setdefault(label_name, {})
-        frame_dict = label_dict.setdefault(fr_idx, {
-            'coords': np.full(data_shape, np.nan, dtype=np.float64),
-            'point_times': np.full(data_shape[0], 0, dtype=np.float64),
-            'labeler': np.full(data_shape[0], 0, dtype=np.uint16)
-        })
+    def _reference_filter_changed(self, checked):
+        self.session.only_annotated_references = checked
+        self._render_frame(images=False)
 
-        if self.user not in self.labels["labeler_list"]:
-            self.labels["labeler_list"].append(self.user)
-        frame_dict['labeler'][cam_idx] = self.labels["labeler_list"].index(self.user)
-        frame_dict['point_times'][cam_idx] = time.time()
-        coords = np.array(coords, dtype=np.float64)
-        frame_dict['coords'][cam_idx] = coords
+    def _single_label_mode_changed(self, checked):
+        self.session.single_label_mode = checked
 
-    def save_labels(self, file: Path = None):
-        """
-        Save the current labels to a specified file.
+    def viewer_click(self, x, y, cam_frame_idx, cam_idx, action='create_label'):
+        previous_time = self.session.current_time
+        if self.session.handle_video_action(cam_idx, cam_frame_idx, (x, y), action):
+            changed_time = previous_time != self.session.current_time
+            self._render_frame(images=changed_time)
+            if changed_time:
+                self.synchronizer.publish(self.session.current_time)
 
-        Args:
-            file (Path, optional): The file path where the labels should be saved.
-                                   If not provided, the default path 'labels.yml'
-                                   in the labels folder will be used.
+    def set_current_label(self, name):
+        if self.session.select_label(name):
+            self._render_selection()
 
-        """
-        if file is None:
-            file = self.labels_folder / 'labels.yml'
+    def _sketch_point_selected(self, x, y):
+        self.session.select_sketch_point(x, y)
+        self._render_selection()
 
-        lock = threading.Lock()
-        if lock.acquire(timeout=30):
-            # Locking here ensures that the data for the save is only prepared after the lock is successfully acquired
-            try:
-                self.save_thread.submit(self.save_labels_thread, file, self.labels, lock)
-            except Exception as e:
-                lock.release()
-                raise e
-        else:
-            raise RuntimeError('Labels file lock not acquired for 30 seconds!')
+    def sketch_select(self, index):
+        self.session.select_sketch(index)
+        self._render_sketch()
+        self._render_selection()
 
-    @staticmethod
-    def save_labels_thread(file: Path, labels, lock):
-        try:
-            label_lib.save(file, labels)
-        finally:
-            lock.release()
-        logger.log(logging.INFO, f'Saved labels ({file.as_posix()})')
+    def set_time(self, time, mqtt_publish=True):
+        self.session.seek(time)
+        self._render_frame()
+        if mqtt_publish:
+            self.synchronizer.publish(self.session.current_time)
 
-    def save_labels_as(self):
-        """ MenuBar > Save As..."""
-        file = QFileDialog.getSaveFileName(self, "Save Labels As...", "", "Session File (*.yml)")[0]
-        if file:
-            logger.log(logging.INFO, f"Saving Labels As {file}")
-            self.save_labels(Path(file))
-
-    def mdi_view_select(self, view_mode: str):
-        match view_mode:
-            case "tab_view":
-                self.mdi.setViewMode(QMdiArea.ViewMode.TabbedView)
-            case "tile_view":
-                self.mdi.setViewMode(QMdiArea.ViewMode.SubWindowView)
-                self.mdi.tileSubWindows()
-            case "cascade_view":
-                self.mdi.setViewMode(QMdiArea.ViewMode.SubWindowView)
-                self.mdi.cascadeSubWindows()
-            case _:
-                logger.log(logging.WARNING, f"Unknown MDI view mode selected")
-
-    def sketch_select(self):
-        self.trigger_autosave_event()
-        self.dock_sketch.clear_sketch()
-        self.dock_sketch.current_sketch_idx = self.dock_sketch.combobox_sketches.currentIndex()
-        self.dock_sketch.init_sketch()
-        self.dock_sketch.combobox_sketches.clearFocus()
-
-        list_labels = self.dock_sketch.list_labels
-        list_labels.currentItemChanged.disconnect()
-        list_labels.clear()
-        list_labels.addItems(self.dock_sketch.get_sketch_labels())
-        list_labels.currentItemChanged.connect(self.label_select)
-        list_labels.setCurrentRow(0)
-
-    def label_select(self):
-        self.trigger_autosave_event()
-        self.dock_sketch.update_sketch(current_label_name=self.get_current_label())
-        self.dock_sketch.list_labels.clearFocus()
-        for _, subwin in self.subwindows.items():
-            subwin.set_current_label(label_name=self.get_current_label())
-
-    def move_num_timepoints(self, num: int):
-        if self.d_time == 0:
-            next_time_idx = min(len(self.times) - 1, self.times.index(self.current_time) + num)
-            d_time = self.times[next_time_idx] - self.current_time
-        elif self.d_time < 0:
-            cam_idx = min(len(self.cam_times)-1,int(round(-self.d_time-1)))
-            current_cam_time_idx = np.argmin(np.abs(np.array(self.cam_times[cam_idx])-self.current_time))
-            n_cam_times = len(self.cam_times[cam_idx])
-            d_time = (self.cam_times[cam_idx][min(n_cam_times-1, current_cam_time_idx+num)]
-                      - self.cam_times[cam_idx][current_cam_time_idx])
-        else:
-            d_time = self.d_time * num
-        self.set_time(self.get_valid_time(self.current_time + d_time))
+    def move_num_timepoints(self, count):
+        self.session.step(count)
+        self._render_frame()
+        self.synchronizer.publish(self.session.current_time)
 
     def goto_next_time(self):
         self.move_num_timepoints(1)
@@ -781,47 +186,119 @@ class MainWindow(QMainWindow):
     def goto_previous_time(self):
         self.move_num_timepoints(-1)
 
+    def viewer_wheel_event(self, delta):
+        self.move_num_timepoints(int(round(delta / 120)))
+
     def field_current_time_changed(self):
-        new_time = float(self.dock_controls.widgets['fields']['current_time'].text())
-        self.set_time(self.get_valid_time(new_time))
-        # self.dock_controls.widgets['fields']['current_time'].clearFocus()
+        field = self.dock_controls.widgets['fields']['current_time']
+        try:
+            self.set_time(float(field.text()))
+        except ValueError:
+            field.setText(str(round(self.session.current_time, 6)))
 
-    def viewer_wheel_event(self, delta: int):
-        self.move_num_timepoints(num=int(round(delta / 120)))
+    def set_d_time(self):
+        field = self.dock_controls.widgets['fields']['d_time']
+        try:
+            self.session.set_time_step(field.text())
+        except ValueError:
+            field.setText(str(self.session.d_time))
+        field.clearFocus()
 
-    # Shortcuts
+    def save_labels(self, file=None):
+        self.session.save(file)
+
+    def save_labels_as(self):
+        file = QFileDialog.getSaveFileName(self, 'Save Labels As...', '', 'Session File (*.yml)')[0]
+        if file:
+            self.save_labels(Path(file))
+
+    def _check_saves(self):
+        try:
+            self.session.saver.check()
+        except RuntimeError as error:
+            QMessageBox.critical(self, 'Could not save labels', str(error))
+
+    def viewer_rotate(self):
+        for window in self.subwindows.values():
+            window.rotate_view((window.rot_angle + 90) % 360)
+
+    def viewer_zoom_reset(self):
+        for window in self.subwindows.values():
+            angle = window.rot_angle
+            window.rotate_view(0)
+            window.rotate_view(angle)
+            window.plot_wget.autoRange()
+
+    def arrange_cameras(self, mode):
+        """Arrange docked cameras without disturbing floating windows."""
+        self._camera_layout = mode
+        docks = [dock for dock in self.subwindows.values() if not dock.isFloating()]
+        if not docks:
+            return
+        workspace = self.camera_workspace
+        for dock in docks:
+            workspace.removeDockWidget(dock)
+        for dock in docks:
+            workspace.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+            dock.show()
+        if mode == 'tab_view':
+            for dock in docks[1:]:
+                workspace.tabifyDockWidget(docks[0], dock)
+            docks[0].raise_()
+        else:
+            columns = math.ceil(math.sqrt(len(docks)))
+            row_heads = []
+            for index, dock in enumerate(docks):
+                if index % columns == 0:
+                    if row_heads:
+                        workspace.splitDockWidget(row_heads[-1], dock, Qt.Orientation.Vertical)
+                    row_heads.append(dock)
+                else:
+                    workspace.splitDockWidget(docks[index - 1], dock, Qt.Orientation.Horizontal)
+            for start in range(0, len(docks), columns):
+                row = docks[start:start + columns]
+                workspace.resizeDocks(row, [1] * len(row), Qt.Orientation.Horizontal)
+            workspace.resizeDocks(row_heads, [1] * len(row_heads), Qt.Orientation.Vertical)
+
+    def dock_all_cameras(self):
+        for dock in self.subwindows.values():
+            dock.setFloating(False)
+            dock.show()
+        self.arrange_cameras(self._camera_layout)
+
     def keyPressEvent(self, event):
-        controls_cfg = self.cfg['controls']
+        if not self._handle_shortcut(event):
+            super().keyPressEvent(event)
 
-        if controls_cfg['buttons']['next_time'] and event.key() == Qt.Key.Key_D:
-            self.goto_next_time()
-        elif controls_cfg['buttons']['previous_time'] and event.key() == Qt.Key.Key_A:
-            self.goto_previous_time()
-        elif not event.isAutoRepeat():
-            if controls_cfg['buttons']['save_labels'] and event.key() == Qt.Key.Key_S:
-                self.save_labels()
-            elif controls_cfg['buttons']['zoom_out'] and event.key() == Qt.Key.Key_O:
-                self.dock_controls.widgets['buttons']['zoom_out'].click()
-            elif controls_cfg['buttons']['next_label'] and event.key() == Qt.Key.Key_N:
-                self.dock_sketch.widgets['buttons']['next_label'].click()
-            elif controls_cfg['buttons']['previous_label'] and event.key() == Qt.Key.Key_P:
-                self.dock_sketch.widgets['buttons']['previous_label'].click()
-            # This button is later added
-            elif controls_cfg['buttons'].get('rotate', True) and event.key() == Qt.Key.Key_R:
-                self.dock_controls.widgets['buttons']['rotate'].click()
+    def _handle_shortcut(self, event):
+        cfg = self.session.config['controls']['buttons']
+        actions = {
+            Qt.Key.Key_D: ('next_time', self.goto_next_time),
+            Qt.Key.Key_A: ('previous_time', self.goto_previous_time),
+            Qt.Key.Key_S: ('save_labels', self.save_labels),
+            Qt.Key.Key_O: ('zoom_out', self.viewer_zoom_reset),
+            Qt.Key.Key_R: ('rotate', self.viewer_rotate),
+            Qt.Key.Key_N: ('next_label', self.dock_sketch.widgets['buttons']['next_label'].click),
+            Qt.Key.Key_P: ('previous_label', self.dock_sketch.widgets['buttons']['previous_label'].click),
+        }
+        action = actions.get(event.key())
+        if action and cfg.get(action[0], action[0] == 'rotate'):
+            if not event.isAutoRepeat() or action[0] in ('next_time', 'previous_time'):
+                action[1]()
+            event.accept()
+            return True
+        return False
 
     def closeEvent(self, event):
-        if self.cfg['exit_save_labels']:
-            self.save_labels()
-
-        file_exit_status = self.labels_folder / 'exit_status.npy'
-        if file_exit_status.is_file():
-            exit_status = np.load(file_exit_status.as_posix(), allow_pickle=True)[()]
-        else:
-            exit_status = {}
-        exit_status['i_time'] = self.current_time
-        np.save(file_exit_status, exit_status)
-
-
-class UnsupportedFormatException(Exception):
-    pass
+        try:
+            self.session.close()
+        except Exception as error:
+            logger.exception('Could not close labeling session')
+            QMessageBox.critical(self, 'Could not save session', f'{error}\nThe session remains open; please retry saving.')
+            event.ignore()
+            return
+        self.save_timer.stop()
+        self.synchronizer.close()
+        for dock in self.subwindows.values():
+            dock.hide()
+        event.accept()

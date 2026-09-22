@@ -1,8 +1,8 @@
 import logging
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QApplication, QMdiSubWindow, QLabel, QSpinBox, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtWidgets import QApplication, QDockWidget, QLabel, QSpinBox, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton
 import pyqtgraph as pg
 
 logger = logging.getLogger(__name__)
@@ -22,8 +22,10 @@ class CustomViewBox(pg.ViewBox):
             super().wheelEvent(event)
 
 
-class ViewerSubWindow(QMdiSubWindow):
+class ViewerSubWindow(QDockWidget):
+    """A camera view that can be docked, tabbed, or floated onto another screen."""
     mouse_clicked_signal = Signal(float, float, int, int, str)
+    key_pressed_signal = Signal(object)
     # Necessary to follow camelCase for keys here, for compatibility with pyqtgraph
     plot_params = {
         'label': {'symbol': 'o', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
@@ -34,16 +36,16 @@ class ViewerSubWindow(QMdiSubWindow):
         'error_line': {'color': 'red', 'width': 2}
     }
 
-    def __init__(self, index: int, reader, parent=None, img_item=None):
+    def __init__(self, index: int, camera, parent=None, img_item=None):
 
         super().__init__(parent)
-        # TODO: It will be ideal to have minimize and maximize buttons without close button
-        self.setWindowFlags(
-            Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint
-        )
+        self.setObjectName(f'camera_{index}')
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
+                         | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
+        self.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
 
         self.index = index
-        self.reader = reader
+        self.camera = camera
         self.img_item = img_item
         self.rot_angle = 0.0  # Clockwise angle in degrees
         self.frame_idx = None
@@ -85,9 +87,66 @@ class ViewerSubWindow(QMdiSubWindow):
         self.label_labeler = QLabel("")
         bottom_layout.addWidget(self.label_labeler)
 
+        self.dock_button = QPushButton('Dock')
+        self.dock_button.setToolTip('Return this camera to the main window')
+        self.dock_button.clicked.connect(lambda: self.setFloating(False))
+        self.dock_button.hide()
+        bottom_layout.addWidget(self.dock_button)
+
         self.set_intensity_range()
         main_layout.addWidget(bottom_widget)
         self.setWidget(main_widget)
+        self._decoration_timer = QTimer(self)
+        self._decoration_timer.setSingleShot(True)
+        self._decoration_timer.timeout.connect(self._ensure_floating_window_flags)
+        self.topLevelChanged.connect(self._floating_changed)
+
+    def _floating_changed(self, floating):
+        self.dock_button.setVisible(floating)
+        if not floating:
+            self._decoration_timer.stop()
+            self.setWindowState(Qt.WindowState.WindowNoState)
+            return
+        self._ensure_floating_window_flags()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.isFloating():
+            # Qt can reset flags again at the end of a dock drag, without another
+            # topLevelChanged signal. Recheck after its show operation completes.
+            self._decoration_timer.start(0)
+
+    def _ensure_floating_window_flags(self):
+        if not self.isFloating() or not self.isVisible():
+            return
+        # Recreating a native window during dragging would break its mouse grab.
+        if QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+            self._decoration_timer.start(50)
+            return
+
+        # Qt assigns tool/frameless flags when a dock floats on some platforms.
+        # Request a regular decorated window, including native resize and
+        # minimize/maximize controls. Qt resets the flags when docking again.
+        flags = (Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint
+                 | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
+                 | Qt.WindowType.WindowMinimizeButtonHint | Qt.WindowType.WindowMaximizeButtonHint)
+        if self.windowFlags() == flags:
+            return
+        geometry = self.geometry()
+        visible = self.isVisible()
+        self.setWindowFlags(flags)
+        self.setGeometry(geometry)
+        # Changing flags hides/recreates the native window.
+        if visible:
+            self.show()
+
+    def keyPressEvent(self, event):
+        # Floating docks are separate windows, so unhandled keys need an explicit
+        # route to the session shortcuts. Editors still consume their own keys.
+        event.ignore()
+        self.key_pressed_signal.emit(event)
+        if not event.isAccepted():
+            super().keyPressEvent(event)
 
     def redraw_frame(self):
         if self.frame_idx is None:
@@ -95,7 +154,7 @@ class ViewerSubWindow(QMdiSubWindow):
                 self.img_item.clear()
             return
 
-        img = self.reader.get_data(self.frame_idx).copy()
+        img = self.camera.frame(self.frame_idx)
         levels = [self.box_vmin.value(), self.box_vmax.value()]
         img = np.clip(img, *levels)
 
@@ -235,9 +294,7 @@ class ViewerSubWindow(QMdiSubWindow):
             logger.log(logging.DEBUG, f"Clicked on sub-window {self.index} at {mouse_point.x()}, {mouse_point.y()}")
 
     def set_intensity_range(self):
-        img_dtype = self.reader.get_data(0).dtype
-        min_int = np.iinfo(img_dtype).min
-        max_int = np.iinfo(img_dtype).max
+        min_int, max_int = self.camera.intensity_range()
         self.box_vmin.setRange(min_int, max_int)
         self.box_vmin.setValue(min_int)
         self.box_vmax.setRange(min_int, max_int)

@@ -1,161 +1,68 @@
-import datetime
-
-import shutil
-
-import os
-from glob import glob
-from pathlib import Path
-
-import yaml
+"""User/job selection dialog; filesystem operations live in JobRepository."""
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QDialog, QGridLayout, QComboBox, QSizePolicy, QPushButton
+from PySide6.QtWidgets import QDialog, QGridLayout, QComboBox, QPushButton
+
+from labelgui.core.jobs import JobRepository
 
 
 class SelectUserWindow(QDialog):
-    def __init__(self, drive: Path, parent=None):
-        super(SelectUserWindow, self).__init__(parent)
-        self.drive = drive
-
+    def __init__(self, drive, parent=None, *, repository=None):
+        super().__init__(parent)
+        self.repository = repository or JobRepository(drive)
         self.setGeometry(0, 0, 256, 128)
-        self.center()
+        rect = self.frameGeometry()
+        rect.moveCenter(QGuiApplication.primaryScreen().geometry().center())
+        self.move(rect.topLeft())
         self.setWindowTitle('Select User')
-
-        self.user_list = self.get_user_list(drive)
-        self.job_names = []
-
-        self.selecting_layout = QGridLayout()
-
+        layout = QGridLayout(self)
         self.user_combobox = QComboBox()
-        self.user_combobox.addItems(self.user_list)
+        self.user_combobox.addItems(self.repository.users())
         self.user_combobox.setCurrentIndex(-1)
-        self.user_combobox.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                         QSizePolicy.Policy.Preferred)
-        self.selecting_layout.addWidget(self.user_combobox)
-
         self.job_combobox = QComboBox()
-        self.job_combobox.setDisabled(True)
-        self.job_combobox.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                        QSizePolicy.Policy.Preferred)
-        self.selecting_layout.addWidget(self.job_combobox)
-
         self.selecting_button = QPushButton('Ok')
-        self.selecting_button.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                            QSizePolicy.Policy.Preferred)
-        self.selecting_layout.addWidget(self.selecting_button)
-
         self.remove_button = QPushButton('Remove')
-        self.remove_button.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                         QSizePolicy.Policy.Preferred)
-        self.selecting_layout.addWidget(self.remove_button)
-
+        for row, widget in enumerate((self.user_combobox, self.job_combobox,
+                                      self.selecting_button, self.remove_button)):
+            layout.addWidget(widget, row, 0)
         self.user_combobox.currentIndexChanged.connect(self.user_change)
+        self.job_combobox.currentIndexChanged.connect(self._update_buttons)
         self.selecting_button.clicked.connect(self.accept)
         self.remove_button.clicked.connect(self.remove)
+        self.user_change()
+        defaults = self.repository.read_defaults()
+        user_index = self.user_combobox.findText(defaults['user'] or '')
+        self.user_combobox.setCurrentIndex(user_index)
+        job_index = self.job_combobox.findText(defaults['job'] or '')
+        if job_index >= 0:
+            self.job_combobox.setCurrentIndex(job_index)
 
-        self.setLayout(self.selecting_layout)
-
-        # Useful for automatically loading user preferences
-        self.defaults_file = Path("~/.bbo_labelgui/defaults.yml").expanduser().resolve()
-
-        default_config = self.read_defaults()
-        if default_config["user"] in self.user_list:
-            self.user_combobox.setCurrentIndex(self.user_list.index(default_config["user"]))
-
-        if default_config["job"] in self.job_names:
-            self.job_combobox.setCurrentIndex(self.job_names.index(default_config["job"]))
-
-    def read_defaults(self):
-        default_config = None
-        if self.defaults_file.is_file():
-            with open(self.defaults_file, 'r') as fh:
-                default_config = yaml.safe_load(fh)
-
-        if default_config is None or not ('user' in default_config and 'job' in default_config):
-            default_config = {
-                'user': None,
-                'job': None,
-            }
-        return default_config
-
-    def write_defaults(self, user=None, job=None):
-        if user is None:
-            user = self.get_user()
-            job = self.get_job()
-
-        default_config = self.read_defaults()
-        default_config["user"] = user
-        default_config["job"] = job
-
-        os.makedirs(self.defaults_file.parent, exist_ok=True)
-        with open(self.defaults_file, 'w') as fh:
-            yaml.safe_dump(default_config, fh)
-
-    @staticmethod
-    def get_user_list(drive):
-        user_list = sorted(os.listdir(drive / 'data' / 'user'))
-        return user_list
+    def _update_buttons(self):
+        self.selecting_button.setEnabled(self.get_user() is not None)
+        self.remove_button.setEnabled(self.get_job() is not None)
 
     def user_change(self):
-        job_dir = self.drive / 'data' / 'user' / self.get_user() / 'jobs'
-        if job_dir.is_dir():
-            jobs = glob((job_dir / '*.yml').as_posix()) + glob((job_dir / '*.py').as_posix())
-
-            if len(jobs) > 0:
-                jobs = sorted(jobs)
-                self.job_combobox.setDisabled(False)
-                self.job_names = [Path(j).stem for j in jobs]
-                self.job_combobox.clear()
-                self.job_combobox.addItems(self.job_names)
-            else:
-                self.job_combobox.clear()
-                self.job_combobox.setDisabled(True)
-        else:
-            self.job_combobox.clear()
-            self.job_combobox.setDisabled(True)
-
-    def center(self):
-        qr = self.frameGeometry()
-        cp = QGuiApplication.primaryScreen().geometry().center()
-        qr.moveCenter(cp)
-        self.move(qr.topLeft())
+        self.job_combobox.clear()
+        user = self.get_user()
+        if user is not None:
+            self.job_combobox.addItems(self.repository.jobs(user))
+        self.job_combobox.setEnabled(self.job_combobox.count() > 0)
+        self._update_buttons()
 
     def get_user(self):
-        user_id = self.user_combobox.currentIndex()
-        user = self.user_list[user_id]
-        return user
+        return self.user_combobox.currentText() if self.user_combobox.currentIndex() >= 0 else None
 
     def get_job(self):
-        job_id = self.job_combobox.currentIndex()
-        if job_id != -1:
-            job = self.job_names[job_id]
-        else:
-            job = None
-        return job
+        return self.job_combobox.currentText() if self.job_combobox.currentIndex() >= 0 else None
 
     def remove(self):
-        user = self.get_user()
-        job = self.get_job()
-
-        job_dir = self.drive / 'data' / 'user' / user / 'jobs'
-        (job_dir / "done").mkdir(exist_ok=True)
-        for ext in ['yml', 'py']:
-            file = job_dir /  f'{job}.{ext}'
-            if file.is_file():
-                shutil.move(file, job_dir / "done" / f'{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}_{job}.{ext}')
-            else:
-                print(f"File {file} does not exist.")
-        print(self.user_list, self.job_names, self.user_combobox.currentIndex(), self.job_combobox.currentIndex())
-        self.job_combobox.removeItem(self.job_combobox.currentIndex())
-        self.job_names.remove(job)
-        print(self.user_list, self.job_names, self.user_combobox.currentIndex(), self.job_combobox.currentIndex())
-
+        self.repository.complete_job(self.get_user(), self.get_job())
+        self.user_change()
 
     @staticmethod
     def start(drive, parent=None):
-        selecting = SelectUserWindow(drive=drive, parent=parent)
-        exit_sel = selecting.exec()
-        user = selecting.get_user()
-        job = selecting.get_job()
-        selecting.write_defaults(user, job)
-
-        return user, job, exit_sel == QDialog.DialogCode.Accepted
+        dialog = SelectUserWindow(drive, parent)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        user, job = dialog.get_user(), dialog.get_job()
+        if accepted:
+            dialog.repository.write_defaults(user, job)
+        return user, job, accepted

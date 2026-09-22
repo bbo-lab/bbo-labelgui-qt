@@ -1,52 +1,41 @@
 import argparse
 import logging
-import os
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication
 from bbo import label_lib
-
-from . import ui
-
-logger = logging.getLogger(__name__)
 
 
 def main():
-    # Parse inputs
-    parser = argparse.ArgumentParser(description="LabelGUI - Simple GUI to annotate data.")
-    parser.add_argument('INPUT_PATH', type=str, help="Directory with detect job configuration")
-    parser.add_argument('--merge', type=str, required=False, nargs='*', default=None,
-                        help="If given, merges given labes.npz into labels.npz file specified in INPUT_PATH")
-    parser.add_argument('--add', type=str, required=False, nargs='*', default=None,
-                        help="Like merge, but never overwrites target data")
-    parser.add_argument('--combine_cams', type=str, required=False, nargs='*', default=None,
-                        help="If given, merges given labes.npz into a labels.npz file specified in INPUT_PATH, "
-                             "where each labels file stands for a separate camera. 'None' serves as a placeholder.")
-    parser.add_argument('--yml_only', required=False, action="store_true",
-                        help="Switches between master mode and worker mode")
-    parser.add_argument('--sync', type=str, required=False, nargs='*', default=["bbo/sync/t"],
-                        help="Sync via mqtt. Defaults to channel bbo/sync/t")
-    parser.add_argument('-log', '--loglevel', default='info', help='Provide logging level')
-
+    parser = argparse.ArgumentParser(description='LabelGUI - guided video annotation.')
+    parser.add_argument('INPUT_PATH', help='Base data directory, or target label file for merge commands')
+    operations = parser.add_mutually_exclusive_group()
+    operations.add_argument('--merge', nargs='+', help='Merge label files into INPUT_PATH')
+    operations.add_argument('--add', nargs='+', help='Add labels without overwriting target data')
+    operations.add_argument('--combine_cams', nargs='+', help='Combine labels from separate cameras')
+    parser.add_argument('--yml_only', action='store_true', help='Only write YAML label files')
+    parser.add_argument('--sync', nargs='?', const=False, default='bbo/sync/t',
+                        help='MQTT topic; pass --sync without a topic to disable synchronization')
+    parser.add_argument('-log', '--loglevel', default='info')
     args = parser.parse_args()
     logging.basicConfig(level=args.loglevel.upper())
-
-    input_path = os.path.expanduser(args.INPUT_PATH)
-    logger.log(logging.INFO, f"Input path: {input_path}")
-
+    path = Path(args.INPUT_PATH).expanduser()
     if args.merge is not None:
-        label_lib.merge(args.merge, target_file=input_path, overwrite=True, yml_only=args.yml_only)
-    if args.add is not None:
-        label_lib.merge(args.add, target_file=input_path, overwrite=False, yml_only=args.yml_only)
+        label_lib.merge(args.merge, target_file=path, overwrite=True, yml_only=args.yml_only)
+    elif args.add is not None:
+        label_lib.merge(args.add, target_file=path, overwrite=False, yml_only=args.yml_only)
     elif args.combine_cams is not None:
-        label_lib.combine_cams(args.combine_cams, target_file=input_path, yml_only=args.yml_only)
+        label_lib.combine_cams(args.combine_cams, target_file=path, yml_only=args.yml_only)
     else:
+        from PySide6.QtWidgets import QApplication
+        from labelgui.ui import MainWindow
         app = QApplication([])
-        gui = ui.MainWindow(Path(input_path), sync=args.sync[0] if len(args.sync) > 0 else False)
+        try:
+            gui = MainWindow(path, sync=args.sync)
+        except (ValueError, OSError) as error:
+            logging.getLogger(__name__).error('Could not open labeling session: %s', error)
+            raise SystemExit(1) from error
         gui.show()
         app.exec()
-
-    return
 
 
 if __name__ == '__main__':
