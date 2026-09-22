@@ -19,8 +19,9 @@ SelectUserWindow ---> JobRepository
 MainWindow ---------> TimeSynchronizer (MQTT transport)
 ```
 
-- `configuration.py` resolves job configuration paths and loads/validates YAML or
-  legacy Python configurations through the existing BBO configuration loader.
+- `configuration.py` resolves `.yml`/`.yaml` job configurations, applies defaults,
+  validates fields, and archives both the original and normalized configuration.
+  It retains BBO YAML includes and placeholders. Python configs are unsupported.
 - `session.py` owns the current time, sketch, landmark, cameras, annotations,
   navigation mode, reference filter, and autosave cadence. `open()` assembles a
   job; its reader factory and label repository can be substituted in tests.
@@ -63,8 +64,13 @@ For GUI tests or alternative startup flows, pass a prepared session to
 
 ## Data compatibility
 
-Jobs retain the existing keys, BBO YAML includes/path placeholders, and legacy
-`.py` configuration conversion. Sketch `.npy` files still contain `sketch` and
+Jobs retain the existing keys and BBO YAML includes/path placeholders. Only
+`recording_folder`, `recording_filenames`, and `sketch_files` are required;
+optional fields have validated defaults. Relative asset paths resolve from the
+job config directory; recording filenames resolve from `recording_folder`.
+Omitted controls default to enabled. Discovery, loading, and completion support
+YAML only; `.py` files are ignored and are not archived as completed jobs.
+Sketch `.npy` files still contain `sketch` and
 `sketch_label_locations`. YAML sketches (`.yml`/`.yaml`) use `version: "1.0"`,
 an image filename in `sketch`, and the same `sketch_label_locations` mapping.
 Relative image filenames resolve against the sketch YAML's directory. Image I/O

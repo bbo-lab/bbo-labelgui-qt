@@ -22,13 +22,38 @@ and where it saves. This expects the following file structure:
 │       └── ...
 └── user/
 ```
-user1, user2,... will be presented in a selection dialog on startup. Currently, the jobs can be in .yml format or .py format.
-The .py format is to be deprecated in the future.
+user1, user2,... will be presented in a selection dialog on startup. Jobs use
+`.yml` or `.yaml` configurations; Python (`.py`) configurations are no longer supported.
+Each file in `data/user/<user>/jobs/` is a selectable job. Without a selected job,
+the application uses `data/user/<user>/labelgui_cfg.yml` (or `.yaml`).
+When both extensions exist for the same job, `.yml` takes precedence.
 #### Output
 Marking results will be placed in `[base data directory]/user/[user]/[dataset]/`.
 
 ### Others
 To manipulate i.e. merge, add labels files, see `--help` for available options. 
+
+## Job configuration
+
+See [example/labelgui_cfg.yml](example/labelgui_cfg.yml) for a documented config
+covering recordings, sketches, camera timestamps, reference labels, saving, and
+controls. Supply your own videos and adjust its paths before opening the job.
+
+Only `recording_folder`, `recording_filenames`, and `sketch_files` are required.
+Defaults enable all cameras and controls, use the full recording time range and
+frame-by-frame navigation, and save changed labels on exit. Autosave is disabled
+unless enabled in the config.
+
+Relative recording-folder, sketch, timestamp-CSV, and label-file paths resolve
+from the job configuration's directory. Recording filenames resolve from
+`recording_folder`. Absolute paths, BBO path placeholders (including `{file}`),
+and BBO `!include:` directives remain supported. Plain relative paths supplied
+by included files also resolve from the job config's directory; use `{file}` in
+an included file for paths relative to that file.
+
+Existing YAML field names are retained. Explicit settings override defaults;
+omitted controls now default to enabled. Relative paths previously interpreted
+from the working directory should be updated to be relative to the config file.
 
 ## Sketch files
 

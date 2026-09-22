@@ -10,7 +10,7 @@ from bbo import path_management
 
 from labelgui import misc
 from .annotations import AnnotationStore, nearest_point
-from .configuration import load_configuration
+from .configuration import archive_configuration, load_configuration
 from .persistence import LabelRepository, SaveService, load_resume_time, save_resume_time
 from .sketch import Sketch
 from .timeline import Timeline
@@ -108,7 +108,7 @@ class LabelingSession:
             folder = (drive / 'user' / user / dataset).expanduser().resolve()
             for subfolder in ('backup', 'autosave'):
                 (folder / subfolder).mkdir(parents=True, exist_ok=True)
-            misc.archive_cfg(config_path, folder / 'backup')
+            archive_configuration(config_path, folder / 'backup', cfg)
             source = cfg['load_labels_file']
             source = Path(source) if isinstance(source, (str, Path)) else folder / 'labels.yml'
             labels = repository.load(source) if source.exists() else None

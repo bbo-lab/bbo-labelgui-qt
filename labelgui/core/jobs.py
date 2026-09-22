@@ -5,6 +5,8 @@ import shutil
 
 import yaml
 
+from .configuration import CONFIG_EXTENSIONS
+
 
 class JobRepository:
     def __init__(self, drive, defaults_file=None):
@@ -16,7 +18,8 @@ class JobRepository:
 
     def jobs(self, user):
         folder = self.drive / 'data' / 'user' / user / 'jobs'
-        return sorted({p.stem for extension in ('*.yml', '*.py') for p in folder.glob(extension)})
+        return sorted({p.stem for extension in CONFIG_EXTENSIONS
+                       for p in folder.glob(f'*{extension}') if p.is_file()})
 
     def read_defaults(self):
         if self.defaults_file.is_file():
@@ -38,7 +41,7 @@ class JobRepository:
         done = folder / 'done'
         done.mkdir(exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-        for extension in ('yml', 'py'):
-            source = folder / f'{job}.{extension}'
+        for extension in CONFIG_EXTENSIONS:
+            source = folder / f'{job}{extension}'
             if source.is_file():
                 shutil.move(source, done / f'{timestamp}_{source.name}')

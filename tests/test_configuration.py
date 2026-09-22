@@ -1,0 +1,157 @@
+import math
+from pathlib import Path
+import shutil
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import yaml
+
+from labelgui.core.configuration import load_configuration, job_config_path
+from labelgui.core.jobs import JobRepository
+from labelgui.core.session import LabelingSession
+from test_core import FakeReader
+
+
+class ConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.minimal = {'recording_folder': 'recordings',
+                        'recording_filenames': ['cam0.mp4', 'cam1.mp4'],
+                        'sketch_files': ['sketch.yml']}
+
+    def write_config(self, data, suffix='.yml'):
+        path = self.root / f'job{suffix}'
+        path.write_text(yaml.safe_dump(data), encoding='utf-8')
+        return path
+
+    def test_yaml_extensions_defaults_and_relative_paths(self):
+        for suffix in ('.yml', '.yaml'):
+            with self.subTest(suffix=suffix):
+                cfg = load_configuration(self.write_config(self.minimal, suffix))
+                self.assertEqual(cfg['recording_folder'], str(self.root / 'recordings'))
+                self.assertEqual(cfg['recording_filenames'], ['cam0.mp4', 'cam1.mp4'])
+                self.assertEqual(cfg['sketch_files'], [str(self.root / 'sketch.yml')])
+                self.assertEqual(cfg['allowed_cams'], [0, 1])
+                self.assertEqual((cfg['min_time'], cfg['max_time']), (-math.inf, math.inf))
+                self.assertEqual(cfg['d_time'], 0.)
+                self.assertFalse(cfg['auto_save'])
+                self.assertTrue(cfg['exit_save_labels'])
+                self.assertTrue(all(cfg['controls']['buttons'].values()))
+                self.assertTrue(all(cfg['controls']['fields'].values()))
+
+    def test_optional_paths_and_partial_controls(self):
+        cfg = load_configuration(self.write_config(self.minimal | {
+            'recording_folder': str(self.root / 'absolute'),
+            'load_labels_file': 'labels/start.yml',
+            'reference_labels_file': 'labels/reference.yml',
+            'video_times': {0: {'file': 'times/cam0.csv', 'offset': .25}, 1: {'fps': 30}},
+            'controls': {'buttons': {'next_time': False}},
+        }))
+        self.assertEqual(cfg['recording_folder'], str(self.root / 'absolute'))
+        self.assertEqual(cfg['load_labels_file'], str(self.root / 'labels/start.yml'))
+        self.assertEqual(cfg['reference_labels_file'], str(self.root / 'labels/reference.yml'))
+        self.assertEqual(cfg['video_times'][0]['file'], str(self.root / 'times/cam0.csv'))
+        self.assertEqual(cfg['video_times'][0]['offset'], .25)
+        self.assertEqual(cfg['video_times'][1], {'fps': 30., 'offset': 0.})
+        self.assertFalse(cfg['controls']['buttons']['next_time'])
+        self.assertTrue(cfg['controls']['buttons']['previous_time'])
+        self.assertTrue(cfg['controls']['fields']['current_time'])
+
+    def test_python_configuration_is_rejected_before_loading(self):
+        path = self.root / 'job.py'
+        path.write_text("{'standardRecordingFolder': 'recordings'}")
+        with patch('labelgui.core.configuration.yaml_load') as loader:
+            with self.assertRaisesRegex(ValueError, 'must be YAML'):
+                load_configuration(path)
+            loader.assert_not_called()
+
+    def test_invalid_yaml_and_missing_fields(self):
+        for data in (None, [], 'text', 42, {}, {'recording_folder': 'recordings'}):
+            with self.subTest(data=data):
+                with self.assertRaises(ValueError):
+                    load_configuration(self.write_config(data))
+        path = self.root / 'invalid.yaml'
+        path.write_text('recording_folder: [')
+        with self.assertRaisesRegex(ValueError, 'Invalid YAML job configuration'):
+            load_configuration(path)
+
+    def test_invalid_field_values(self):
+        cases = [
+            ('recording_folder', None), ('recording_filenames', 'cam.mp4'),
+            ('recording_filenames', []), ('sketch_files', [1]),
+            ('allowed_cams', []), ('allowed_cams', [2]), ('allowed_cams', [True]),
+            ('min_time', float('nan')), ('max_time', None),
+            ('d_time', float('inf')), ('d_time', 'bad'), ('d_time', True),
+            ('sketch_zoom_scale', 0), ('auto_save', 'false'), ('exit_save_labels', 1),
+            ('auto_save_N0', 0), ('auto_save_N1', 1.5), ('auto_save_N1', True),
+            ('video_times', []), ('video_times', {'0': {'fps': 30}}),
+            ('video_times', {2: {}}), ('video_times', {0: None}),
+            ('video_times', {0: {'fps': 0}}), ('video_times', {0: {'offset': float('inf')}}),
+            ('video_times', {0: {'file': None}}), ('controls', []),
+            ('controls', {'buttons': None}), ('controls', {'fields': {'current_time': 'yes'}}),
+            ('load_labels_file', True), ('reference_labels_file', 42), ('dataset_name', None),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                with self.assertRaisesRegex(ValueError, field):
+                    load_configuration(self.write_config(self.minimal | {field: value}))
+        with self.assertRaisesRegex(ValueError, 'min_time must be less than max_time'):
+            load_configuration(self.write_config(self.minimal | {'min_time': 1, 'max_time': 1}))
+
+    def test_bbo_includes_and_file_placeholders(self):
+        assets = self.root / 'assets'
+        assets.mkdir()
+        (assets / 'recordings').mkdir()
+        (assets / 'sketch.yml').touch()
+        (assets / 'base.yml').write_text(yaml.safe_dump(self.minimal | {
+            'recording_folder': '{file}/recordings', 'sketch_files': ['{file}/sketch.yml'],
+        }))
+        path = self.root / 'job.yaml'
+        path.write_text('!include: assets/base.yml\nd_time: 0.5\n')
+        cfg = load_configuration(path)
+        self.assertEqual(cfg['recording_folder'], str(assets / 'recordings'))
+        self.assertEqual(cfg['sketch_files'], [str(assets / 'sketch.yml')])
+        self.assertEqual(cfg['d_time'], .5)
+
+    def test_yaml_job_discovery_and_default_config(self):
+        user = self.root / 'data/user/alice'
+        jobs = user / 'jobs'
+        jobs.mkdir(parents=True)
+        (jobs / 'job.yaml').write_text('{}')
+        (jobs / 'old.py').write_text('{}')
+        (jobs / 'not_a_file.yml').mkdir()
+        (user / 'labelgui_cfg.yaml').write_text('{}')
+        repository = JobRepository(self.root, self.root / 'defaults.yml')
+        self.assertEqual(repository.jobs('alice'), ['job'])
+        self.assertEqual(job_config_path(self.root, 'alice', 'job'), jobs / 'job.yaml')
+        self.assertEqual(job_config_path(self.root, 'alice'), user / 'labelgui_cfg.yaml')
+        with self.assertRaises(FileNotFoundError):
+            job_config_path(self.root, 'alice', 'old')
+        repository.complete_job('alice', 'job')
+        self.assertEqual(repository.jobs('alice'), [])
+        self.assertEqual(len(list((jobs / 'done').iterdir())), 1)
+
+    def test_example_opens_and_archives_normalized_yaml(self):
+        example = Path(__file__).resolve().parents[1] / 'example'
+        target = self.root / 'example'
+        shutil.copytree(example, target)
+        (target / 'recordings').mkdir()
+        for camera in ('camera_0.mp4', 'camera_1.mp4'):
+            (target / 'recordings' / camera).touch()
+        path = target / 'labelgui_cfg.yml'
+        session = LabelingSession.open(self.root, 'alice', path, reader_factory=lambda _: FakeReader())
+        try:
+            self.assertEqual(session.dataset_name, 'example_bird')
+            self.assertEqual(session.sketch.locations['eye'], (140., 50.))
+            self.assertEqual(len(session.cameras), 2)
+            self.assertEqual(session.cameras[0].path, target / 'recordings/camera_0.mp4')
+            backup = session.labels_folder / 'backup'
+            self.assertEqual((backup / path.name).read_text(), path.read_text())
+            processed = backup / 'labelgui_cfg_processed.yml'
+            self.assertEqual(yaml.safe_load(processed.read_text()), session.config)
+            self.assertEqual(load_configuration(processed), session.config)
+        finally:
+            session.close()

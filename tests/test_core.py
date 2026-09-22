@@ -401,7 +401,9 @@ assert not any(name.startswith(('PySide6', 'pyqtgraph', 'matplotlib')) for name 
             jobs = root / 'data' / 'user' / 'alice' / 'jobs'
             jobs.mkdir(parents=True)
             (jobs / 'job.yml').write_text('{}')
+            (jobs / 'job.yaml').write_text('{}')
             (jobs / 'job.py').write_text('{}')
+            (jobs / 'python_only.py').write_text('{}')
             repository = JobRepository(root, root / 'defaults.yml')
             self.assertEqual(repository.users(), ['alice'])
             self.assertEqual(repository.jobs('alice'), ['job'])
@@ -411,6 +413,8 @@ assert not any(name.startswith(('PySide6', 'pyqtgraph', 'matplotlib')) for name 
             repository.complete_job('alice', 'job')
             self.assertEqual(repository.jobs('alice'), [])
             self.assertEqual(len(list((jobs / 'done').iterdir())), 2)
+            self.assertTrue((jobs / 'job.py').exists())
+            self.assertTrue((jobs / 'python_only.py').exists())
 
 
 if __name__ == '__main__':

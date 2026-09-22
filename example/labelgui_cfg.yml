@@ -1,0 +1,68 @@
+# Copy/adapt this file to <base>/data/user/<user>/jobs/<job>.yml.
+# Job configurations accept .yml or .yaml. No Python configuration is executed.
+# Paths below are relative to THIS config file (absolute paths also work).
+# The videos are placeholders: supply your recordings before starting a job.
+
+# Required: recording folder, ordered camera filenames, and at least one sketch.
+recording_folder: recordings
+recording_filenames:
+  - camera_0.mp4
+  - camera_1.mp4
+sketch_files:
+  - sketch_svg.yml
+
+# Optional: defaults are shown unless noted otherwise.
+# Empty dataset_name uses the recording folder's name for the output directory.
+# Output: <base>/user/<user>/<dataset_name>/labels.yml
+dataset_name: example_bird
+allowed_cams: [0, 1]  # Zero-based indices; omitted means all recordings.
+
+# Shared time range: inclusive minimum, exclusive maximum, in seconds.
+min_time: -.inf
+max_time: .inf
+# 0: next/previous shared timepoint; >0: step in seconds;
+# -1: step by camera 0 frames; -2: step by camera 1 frames; etc.
+d_time: 0
+
+# Omit video_times (default {}) to use each recording's FPS metadata.
+# Numeric keys follow recording_filenames order. Offset is added in seconds.
+# This example assumes 30 FPS; replace with your recordings' rates/timestamps.
+video_times:
+  0:
+    fps: 30
+    offset: 0.0
+  1:
+    fps: 30
+    offset: 0.0
+    # Alternatively, use a CSV with a header and one timestamp per frame in
+    # its first column. When file is supplied, it takes precedence over fps.
+    # file: timestamps/camera_1.csv
+
+# null/false: resume the user's existing output labels if present.
+# A filename instead loads that label file as the starting point.
+load_labels_file: null
+# false/null: no references. true: <base>/data/references/<dataset_name>.yml.
+# A filename instead loads references from that path.
+reference_labels_file: false
+
+sketch_zoom_scale: 0.1  # Zoom radius as a fraction of the larger image dimension.
+exit_save_labels: true
+auto_save: false
+# Navigation/selection event intervals; writes happen only after label changes.
+auto_save_N0: 10   # Regular labels.yml
+auto_save_N1: 100  # autosave/labels.yml
+
+# All controls default to enabled. Set individual entries to false to disable.
+controls:
+  buttons:
+    save_labels: true
+    single_label_mode: true
+    zoom_out: true
+    rotate: true
+    previous_label: true
+    next_label: true
+    next_time: true
+    previous_time: true
+  fields:
+    current_time: true
+    d_time: true
