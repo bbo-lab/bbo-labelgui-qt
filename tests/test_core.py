@@ -4,6 +4,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from concurrent.futures import Future
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -187,6 +188,86 @@ class PersistenceTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_navigation_and_selection_do_not_save_unchanged_labels(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder, auto_save=True, auto_save_N0=1,
+                                   auto_save_N1=2, exit_save_labels=True)
+            with patch.object(session.saver.repository, 'save') as save:
+                try:
+                    session.step(1)
+                    session.select_label('tail')
+                    session.select_sketch(0)
+                    session.seek(0)
+                    session.handle_video_action(0, 0, (1, 2), 'delete_label')
+                    self.assertFalse(session.labels_changed)
+                    self.assertIsNone(session.save())
+                finally:
+                    session.close()
+                save.assert_not_called()
+            self.assertTrue((Path(folder) / 'exit_status.npy').exists())
+
+    def test_edits_and_deletions_dirty_labels_until_saved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder, auto_save=True, auto_save_N0=1, auto_save_N1=2)
+            try:
+                session.handle_video_action(0, 0, (1, 2), 'create_label')
+                self.assertTrue(session.labels_changed)
+                session.save().result()
+                self.assertFalse(session.labels_changed)
+                session.handle_video_action(0, 0, (1, 2), 'delete_label')
+                self.assertTrue(session.labels_changed)
+                session.save().result()
+                self.assertFalse(session.labels_changed)
+                session.handle_video_action(0, 0, (1, 2), 'delete_label')
+                self.assertFalse(session.labels_changed)
+                # Single-label mode must mark the edit before navigation autosaves.
+                session.single_label_mode = True
+                session.handle_video_action(0, 0, (3, 4), 'create_label')
+                session.saver.check(wait=True)
+                self.assertFalse(session.labels_changed)
+                saved = LabelRepository().load(Path(folder) / 'labels.yml')
+                np.testing.assert_array_equal(saved['labels']['nose'][0]['coords'][0], [3, 4])
+            finally:
+                session.close()
+
+    def test_pending_save_does_not_clear_new_edits_or_queue_duplicates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            first, second = Future(), Future()
+            try:
+                with patch.object(session.saver, 'save', side_effect=[first, second]) as save:
+                    session.handle_video_action(0, 0, (1, 2), 'create_label')
+                    self.assertIs(session.save(), first)
+                    self.assertTrue(session.labels_changed)
+                    self.assertIs(session.save(), first)
+                    save.assert_called_once()
+                    session.handle_video_action(0, 0, (3, 4), 'create_label')
+                    first.set_result(None)
+                    self.assertTrue(session.labels_changed)
+                    self.assertIs(session.save(), second)
+                    second.set_result(None)
+                    self.assertFalse(session.labels_changed)
+                    self.assertIsNone(session.save())
+                    self.assertEqual(save.call_count, 2)
+            finally:
+                session.close()
+
+    def test_save_as_can_export_unchanged_labels_without_clearing_regular_dirty_state(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            target = Path(folder) / 'export.yml'
+            try:
+                session.save(target, force=True).result()
+                self.assertTrue(target.exists())
+                self.assertFalse(session.labels_changed)
+                session.handle_video_action(0, 0, (1, 2), 'create_label')
+                session.save(target, force=True).result()
+                self.assertTrue(session.labels_changed)
+                session.save().result()
+                self.assertFalse(session.labels_changed)
+            finally:
+                session.close()
+
     def test_workflow_uses_camera_local_frames_and_selection(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)
@@ -218,21 +299,30 @@ class SessionTests(unittest.TestCase):
                 session.saver.check(wait=True)
                 self.assertTrue((Path(folder) / 'labels.yml').is_file())
                 self.assertTrue((Path(folder) / 'autosave' / 'labels.yml').is_file())
+                self.assertFalse(session.labels_changed)
+                with patch.object(session.saver.repository, 'save') as save:
+                    for _ in range(4):
+                        session.step(1)
+                    session.saver.check(wait=True)
+                    save.assert_not_called()
             finally:
                 session.close()
-            self.assertEqual(np.load(Path(folder) / 'exit_status.npy', allow_pickle=True)[()]['i_time'], 1.)
+            self.assertEqual(np.load(Path(folder) / 'exit_status.npy', allow_pickle=True)[()]['i_time'], 2.)
 
     def test_close_failure_allows_retry(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder, exit_save_labels=True)
+            session.handle_video_action(0, 0, (1, 2), 'create_label')
             repository = session.saver.repository
             original = repository.save
             repository.save = Mock(side_effect=OSError('disk full'))
             with self.assertRaises(RuntimeError):
                 session.close()
+            self.assertTrue(session.labels_changed)
             self.assertFalse(session.cameras[0].reader.closed)
             repository.save = original
             session.close()
+            self.assertFalse(session.labels_changed)
             self.assertTrue(session.cameras[0].reader.closed)
 
     def test_open_config_sketch_recordings_and_restore(self):
@@ -253,8 +343,19 @@ class SessionTests(unittest.TestCase):
             session.seek(1.5)
             session.handle_video_action(0, 3, (5, 6), 'create_label')
             session.close()
+            # The same job can resume with a YAML sketch referencing an image.
+            from imageio.v3 import imwrite
+            imwrite(root / 'sketch.png', np.zeros((10, 10), dtype=np.uint8))
+            yaml_sketch = root / 'sketch.yml'
+            yaml_sketch.write_text(yaml.safe_dump({'version': '1.0', 'sketch': 'sketch.png',
+                                                  'sketch_label_locations': {'nose': [2, 3]}}))
+            cfg = yaml.safe_load(config.read_text())
+            cfg['sketch_files'] = [str(yaml_sketch)]
+            config.write_text(yaml.safe_dump(cfg))
             restored = LabelingSession.open(root, 'alice', config, reader_factory=lambda path: FakeReader())
             try:
+                self.assertFalse(restored.labels_changed)
+                self.assertEqual(restored.sketch.locations, {'nose': (2., 3.)})
                 self.assertEqual(restored.current_time, 1.5)
                 self.assertEqual(restored.annotations.point('nose', 3, 0), (5, 6))
             finally:

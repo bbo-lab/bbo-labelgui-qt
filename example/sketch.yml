@@ -1,0 +1,7 @@
+# The image path is relative to this YAML file.
+version: "1.0"
+sketch: images/bird.pgm
+sketch_label_locations:
+  beak_tip: [22, 8]
+  eye: [14, 5]
+  back_of_head: [6, 8]

@@ -29,6 +29,7 @@ class AnnotationStore:
         self.camera_count = camera_count
         self.data = data if data is not None else label_lib.get_empty_labels()
         self.clock = clock
+        self.revision = 0
         for frames in self.data['labels'].values():
             for entry in frames.values():
                 if np.shape(entry['coords']) != (camera_count, 2):
@@ -47,6 +48,7 @@ class AnnotationStore:
             users.append(user)
         entry['labeler'][camera] = users.index(user)
         entry['point_times'][camera] = self.clock()
+        self.revision += 1
 
     def set_point(self, name, frame, camera, coords, user):
         if not name:

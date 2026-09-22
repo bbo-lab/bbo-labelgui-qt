@@ -30,6 +30,29 @@ Marking results will be placed in `[base data directory]/user/[user]/[dataset]/`
 ### Others
 To manipulate i.e. merge, add labels files, see `--help` for available options. 
 
+## Sketch files
+
+The job's `sketch_files` list accepts legacy `.npy` sketches and versioned `.yml`
+or `.yaml` sketches:
+
+```yaml
+version: "1.0"
+sketch: images/bird.png
+sketch_label_locations:
+  beak_tip: [220, 80]
+  eye: [140, 50]
+```
+
+`sketch` references an image file (for example PNG or JPEG). Relative image paths
+are resolved from the directory containing the sketch YAML file; absolute paths
+are also supported. Coordinates are `[x, y]` in image pixels, with `[0, 0]` at the
+top-left, x increasing to the right and y downwards. Landmark order follows the
+YAML mapping order. The format version is required; currently `"1.0"` is supported.
+
+See [example/sketch.yml](example/sketch.yml) for a complete example with an included
+image. Existing `.npy` sketches continue to embed the image array and landmark
+dictionary without requiring a version field.
+
 ## Camera windows
 
 Drag a camera's title bar out of the window, double-click it, or use its undock

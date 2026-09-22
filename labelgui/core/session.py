@@ -75,6 +75,7 @@ class LabelingSession:
         self.single_label_mode = False
         self.only_annotated_references = True
         self._autosave_counter = 0
+        self._label_saves = {}
         self._closed = False
 
     @classmethod
@@ -205,8 +206,35 @@ class LabelingSession:
             self.step(1)
         return True
 
-    def save(self, path=None):
-        return self.saver.save(path or self.labels_folder / 'labels.yml', self.annotations.data)
+    @property
+    def labels_changed(self):
+        """Whether edits remain unsaved to the regular label file."""
+        return self._labels_changed(self._label_path())
+
+    def _label_path(self, path=None):
+        return Path(path or self.labels_folder / 'labels.yml').with_suffix('.yml').resolve()
+
+    def _labels_changed(self, path):
+        revision, future = self._label_saves.get(path, (0, None))
+        saved_revision = 0
+        if (future is not None and future.done() and not future.cancelled()
+                and future.exception() is None):
+            saved_revision = revision
+        return self.annotations.revision != saved_revision
+
+    def save(self, path=None, *, force=False):
+        path = self._label_path(path)
+        revision = self.annotations.revision
+        if not force:
+            pending_revision, future = self._label_saves.get(path, (0, None))
+            # Do not queue the same snapshot again while its write is pending.
+            if future is not None and not future.done() and pending_revision == revision:
+                return future
+            if not self._labels_changed(path):
+                return None
+        future = self.saver.save(path, self.annotations.data)
+        self._label_saves[path] = (revision, future)
+        return future
 
     def autosave_event(self):
         if not self.config.get('auto_save', False):

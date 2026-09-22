@@ -65,7 +65,11 @@ For GUI tests or alternative startup flows, pass a prepared session to
 
 Jobs retain the existing keys, BBO YAML includes/path placeholders, and legacy
 `.py` configuration conversion. Sketch `.npy` files still contain `sketch` and
-`sketch_label_locations`. Labels use BBO's versioned format unchanged:
+`sketch_label_locations`. YAML sketches (`.yml`/`.yaml`) use `version: "1.0"`,
+an image filename in `sketch`, and the same `sketch_label_locations` mapping.
+Relative image filenames resolve against the sketch YAML's directory. Image I/O
+uses imageio without importing the GUI. See `example/sketch.yml`.
+Labels use BBO's versioned format unchanged:
 
 ```text
 labels[landmark_name][camera_local_frame_index]
@@ -84,6 +88,14 @@ Outputs remain under `<base>/user/<user>/<dataset>/`, with `labels.yml`, the
 legacy NPZ companion, `backup/`, `autosave/`, and `exit_status.npy`. Autosave
 continues to count navigation/selection events, not elapsed time or every edit.
 Incidental GUI redraws no longer count as autosave events.
+Label files are only written after annotation edits (including attribution/time
+updates); navigation, selection, and deleting an absent point do not dirty labels.
+`session.labels_changed` stays true until the current edits have been successfully
+saved to the regular label file. Revision tracking preserves edits made during a
+background save and allows failed saves to be retried. The regular and autosave
+files track changes independently. Unchanged labels are also skipped on exit;
+resume time is still written. Save As explicitly forces a write (`save(path,
+force=True)`), even without edits.
 
 ## Threading and lifetime
 

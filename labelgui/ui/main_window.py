@@ -205,7 +205,7 @@ class MainWindow(QMainWindow):
         field.clearFocus()
 
     def save_labels(self, file=None):
-        self.session.save(file)
+        self.session.save(file, force=file is not None)
 
     def save_labels_as(self):
         file = QFileDialog.getSaveFileName(self, 'Save Labels As...', '', 'Session File (*.yml)')[0]
