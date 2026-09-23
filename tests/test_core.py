@@ -96,6 +96,31 @@ class TimelineTests(unittest.TestCase):
 
 
 class AnnotationTests(unittest.TestCase):
+    def test_trajectories_use_recorded_positions_in_camera_frame_order(self):
+        store = AnnotationStore(2)
+        self.assertEqual(store.trajectories(0), [])
+        store.set_point('nose', 4, 0, (4, 5), 'alice')
+        store.set_point('nose', 0, 0, (0, 1), 'alice')
+        store.set_point('nose', 2, 1, (20, 21), 'alice')
+        store.set_point('tail', 1, 0, (10, 11), 'alice')
+        store.set_point('tail', 3, 0, (12, 13), 'alice')
+        paths = store.trajectories(0)
+        self.assertEqual(len(paths), 2)
+        np.testing.assert_array_equal(paths[0], [[0, 1], [4, 5]])
+        np.testing.assert_array_equal(paths[1], [[10, 11], [12, 13]])
+        np.testing.assert_array_equal(store.trajectories(1)[0], [[20, 21]])
+        np.testing.assert_array_equal(store.trajectories(0, ['tail'])[0], paths[1])
+        self.assertEqual(store.trajectories(0, ['unknown']), [])
+        self.assertEqual(store.trajectories(0, []), [])
+        revision = store.revision
+        store.delete_point('nose', 4, 0, 'alice')
+        self.assertGreater(store.revision, revision)
+        np.testing.assert_array_equal(store.trajectories(0, ['nose'])[0], [[0, 1]])
+        revision = store.revision
+        store.set_point('nose', 0, 0, (6, 7), 'alice')
+        self.assertGreater(store.revision, revision)
+        np.testing.assert_array_equal(store.trajectories(0, ['nose'])[0], [[6, 7]])
+
     def test_edit_delete_metadata_and_camera_independence(self):
         store = AnnotationStore(2, clock=lambda: 123.)
         store.set_point('nose', 4, 1, (10, 20), 'alice')

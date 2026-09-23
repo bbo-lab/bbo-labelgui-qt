@@ -74,6 +74,14 @@ class ViewerSubWindow(QDockWidget):
         self.error_lines.hide()
         self.plot_wget.addItem(self.error_lines)
 
+        self.trajectory_item = pg.PlotDataItem(
+            pen=pg.mkPen((0, 255, 255, 130), width=1), symbol='o', symbolSize=3,
+            symbolPen=None, symbolBrush=pg.mkBrush(0, 255, 255, 130),
+        )
+        self.trajectory_item.setZValue(2)
+        self.trajectory_item.hide()
+        self.plot_wget.addItem(self.trajectory_item)
+
         # Contrast options
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout(bottom_widget)
@@ -196,6 +204,15 @@ class ViewerSubWindow(QDockWidget):
         local_center = self.view_box.boundingRect().center()
         self.view_box.setTransformOriginPoint(local_center)
         self.view_box.setRotation(self.rot_angle)
+
+    def set_trajectories(self, paths):
+        """Batch all paths into one plot, without joining different markers."""
+        coords = np.concatenate(paths) if paths else np.empty((0, 2))
+        connect = np.ones(len(coords), dtype=bool)
+        if paths:
+            connect[np.cumsum([len(path) for path in paths]) - 1] = False
+        self.trajectory_item.setData(coords[:, 0], coords[:, 1], connect=connect)
+        self.trajectory_item.setVisible(bool(len(coords)))
 
     def set_annotations(self, view, current_label=None):
         """Replace a frame's coordinates without adding or removing scene items."""

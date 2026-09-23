@@ -65,6 +65,7 @@ class AnnotationStore:
         })
         entry['coords'][camera] = coords
         self._stamp(entry, camera, user)
+        self.revision += 1
 
     def delete_point(self, name, frame, camera, user):
         if self.point(name, frame, camera) is None:
@@ -72,7 +73,25 @@ class AnnotationStore:
         entry = self.data['labels'][name][frame]
         entry['coords'][camera] = np.nan
         self._stamp(entry, camera, user)
+        self.revision += 1
         return True
+
+    def trajectories(self, camera, names=None):
+        """Recorded positions in frame order, one nonempty array per marker.
+
+        Sparse annotations are connected across frame gaps; guesses and missing
+        camera coordinates are excluded.
+        """
+        labels = self.data['labels']
+        paths = []
+        for name in labels if names is None else names:
+            frames = labels.get(name, {})
+            coords = np.asarray([frames[frame]['coords'][camera] for frame in sorted(frames)],
+                                dtype=float).reshape(-1, 2)
+            coords = coords[np.isfinite(coords).all(axis=1)]
+            if len(coords):
+                paths.append(coords)
+        return paths
 
     def guess(self, name, frame, camera):
         for offset in range(1, 4):

@@ -98,6 +98,12 @@ Frame navigation, annotation, and keyboard shortcuts remain synchronized.
 The View menu offers Tab and Tile arrangements for docked cameras, and
 **Dock All Cameras** brings every floating camera back into the main window.
 
+Use **View → Trajectories → Active marker** or **All markers** to overlay paths
+from all annotated frames on each camera's current image. **Hidden** (the default)
+turns them off. Paths connect recorded positions in frame order, including across
+gaps in labeling; guesses and reference labels are excluded. Small dots show the
+recorded positions, and paths update when annotations or the active marker change.
+
 ## Compiling to exe
 1. `conda activate bbo_labelgui_qt`.
 2. Install pyinstaller: `pip install pyinstaller.

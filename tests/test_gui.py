@@ -257,6 +257,87 @@ class GuiTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
+    def test_trajectory_menu_selection_batching_and_frame_navigation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            for camera in range(2):
+                session.annotations.set_point('nose', 2, camera, (3 + camera, 4), 'alice')
+                session.annotations.set_point('nose', 0, camera, (1 + camera, 2), 'alice')
+            session.annotations.set_point('tail', 1, 0, (5, 6), 'alice')
+            session.annotations.set_point('tail', 3, 0, (7, 8), 'alice')
+            window = MainWindow(session=session, sync=False)
+            first, second = window.subwindows.values()
+            item = first.trajectory_item
+            scene_items = tuple(first.plot_wget.items())
+            actions = {action.data(): action for action in window.trajectory_actions.actions()}
+            try:
+                self.assertTrue(actions['off'].isChecked())
+                self.assertFalse(item.isVisible())
+                with patch.object(first, 'redraw_frame') as redraw:
+                    actions['active'].trigger()
+                    redraw.assert_not_called()
+                self.assertTrue(item.isVisible())
+                self.assertFalse(actions['off'].isChecked())
+                np.testing.assert_array_equal(item.getData(), [[1, 3], [2, 4]])
+                np.testing.assert_array_equal(second.trajectory_item.getData(), [[2, 4], [2, 4]])
+                window.set_current_label('tail')
+                np.testing.assert_array_equal(item.getData(), [[5, 7], [6, 8]])
+                self.assertFalse(second.trajectory_item.isVisible())
+                actions['all'].trigger()
+                self.assertFalse(actions['active'].isChecked())
+                np.testing.assert_array_equal(item.getData(), [[1, 3, 5, 7], [2, 4, 6, 8]])
+                np.testing.assert_array_equal(item.opts['connect'], [True, False, True, False])
+                self.assertTrue(second.trajectory_item.isVisible())
+                with patch.object(session.annotations, 'trajectories') as build:
+                    window.set_time(.5, mqtt_publish=False)
+                    window.set_current_label('nose')
+                    build.assert_not_called()
+                self.assertIs(first.trajectory_item, item)
+                self.assertEqual(tuple(first.plot_wget.items()), scene_items)
+                self.assertGreater(item.zValue(), first.img_item.zValue())
+                self.assertLess(item.zValue(), first.marker_items['label'].zValue())
+                self.app.processEvents()
+                actions['off'].trigger()
+                self.assertFalse(item.isVisible())
+                self.assertFalse(second.trajectory_item.isVisible())
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_trajectories_refresh_after_edits_and_deletion_while_hidden(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            window = MainWindow(session=session, sync=False)
+            item = window.subwindows[0].trajectory_item
+            actions = {action.data(): action for action in window.trajectory_actions.actions()}
+            try:
+                actions['active'].trigger()
+                self.assertFalse(item.isVisible())
+                window.viewer_click(1, 2, 0, 0)
+                self.assertTrue(item.isVisible())  # A single sample still has a dot.
+                np.testing.assert_array_equal(item.getData(), [[1], [2]])
+                window.set_time(1, mqtt_publish=False)
+                window.viewer_click(3, 4, 2, 0)
+                np.testing.assert_array_equal(item.getData(), [[1, 3], [2, 4]])
+                window.viewer_click(5, 6, 2, 0)
+                np.testing.assert_array_equal(item.getData(), [[1, 5], [2, 6]])
+                window.viewer_click(5, 6, 2, 0, 'delete_label')
+                np.testing.assert_array_equal(item.getData(), [[1], [2]])
+                actions['off'].trigger()
+                window.set_time(0, mqtt_publish=False)
+                window.viewer_click(1, 2, 0, 0, 'delete_label')
+                actions['active'].trigger()
+                self.assertFalse(item.isVisible())
+                self.assertEqual(item.getData(), (None, None))
+                window.viewer_click(7, 8, 0, 0)
+                self.assertTrue(item.isVisible())
+                np.testing.assert_array_equal(item.getData(), [[7], [8]])
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_close_failure_keeps_window_and_session_open(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)

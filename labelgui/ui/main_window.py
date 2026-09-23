@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox
 
 from labelgui.core.configuration import job_config_path
@@ -39,6 +40,8 @@ class MainWindow(QMainWindow):
                                             | QMainWindow.DockOption.AllowTabbedDocks
                                             | QMainWindow.DockOption.AnimatedDocks)
         self._camera_layout = 'tab_view'
+        self.trajectory_mode = 'off'
+        self._trajectory_key = None
         self.dock_sketch = SketchDock()
         self.dock_controls = ControlsDock()
         self.synchronizer = TimeSynchronizer(sync, self.mqtt_message_signal.emit)
@@ -66,6 +69,16 @@ class MainWindow(QMainWindow):
         menu.addAction('&Tab (single cam view)', lambda: self.arrange_cameras('tab_view'))
         menu.addAction('&Tile', lambda: self.arrange_cameras('tile_view'))
         menu.addAction('&Dock All Cameras', self.dock_all_cameras)
+        trajectories = menu.addMenu('&Trajectories')
+        self.trajectory_actions = QActionGroup(self)
+        self.trajectory_actions.setExclusive(True)
+        for mode, text in (('off', '&Hidden'), ('active', '&Active marker'), ('all', '&All markers')):
+            action = trajectories.addAction(text)
+            action.setCheckable(True)
+            action.setData(mode)
+            action.setChecked(mode == self.trajectory_mode)
+            self.trajectory_actions.addAction(action)
+        self.trajectory_actions.triggered.connect(self._trajectory_mode_changed)
         menu.addSection('Reference labels')
         self.checkbox_disp_ref_annotated = menu.addAction('&Only Display Annotated')
         self.checkbox_disp_ref_annotated.setCheckable(True)
@@ -120,6 +133,25 @@ class MainWindow(QMainWindow):
         self.dock_sketch.display_selection(self.session.current_label)
         for window in self.subwindows.values():
             window.set_current_label(self.session.current_label)
+        self._render_trajectories()
+
+    def _trajectory_mode_changed(self, action):
+        self.trajectory_mode = action.data()
+        self._render_trajectories()
+
+    def _render_trajectories(self):
+        annotations = self.session.annotations
+        name = self.session.current_label if self.trajectory_mode == 'active' else None
+        key = (annotations.revision, self.trajectory_mode, name)
+        if key == self._trajectory_key:
+            return
+        for camera, window in self.subwindows.items():
+            if self.trajectory_mode == 'off':
+                window.trajectory_item.hide()
+            else:
+                names = (name,) if self.trajectory_mode == 'active' else None
+                window.set_trajectories(annotations.trajectories(camera, names))
+        self._trajectory_key = key
 
     def _render_frame(self, images=True):
         for camera, window in self.subwindows.items():
