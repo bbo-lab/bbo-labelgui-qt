@@ -7,13 +7,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 from PySide6.QtCore import Qt, QPointF
+from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDockWidget
 
 from labelgui.ui.main_window import MainWindow
 from labelgui.select_user import SelectUserWindow
 from labelgui.core.jobs import JobRepository
+from labelgui.core.annotations import FrameAnnotations, Point
 from test_core import make_session
 
 
@@ -166,6 +169,93 @@ class GuiTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
             self.assertTrue((Path(folder) / 'exit_status.npy').exists())
+
+    def test_marker_batches_reuse_items_and_clear_stale_coordinates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            window = MainWindow(session=make_session(folder), sync=False)
+            camera = window.subwindows[0]
+            items = dict(camera.marker_items)
+            lines = camera.error_lines
+            scene_items = tuple(camera.plot_wget.items())
+            points = tuple(Point(f'p{i}', (i, i + 1)) for i in range(100))
+            refs = tuple(Point(p.name, (p.coords[0] + 2, p.coords[1] + 3), 'ref_label')
+                         for p in points)
+            try:
+                for _ in range(3):
+                    camera.set_annotations(FrameAnnotations(points, refs, ()), 'p0')
+                    self.assertEqual(len(items['label'].points()), 100)
+                    self.assertEqual(len(items['ref_label'].points()), 100)
+                    self.assertFalse(items['guess_label'].isVisible())
+                    x, y = lines.getData()
+                    np.testing.assert_array_equal(np.column_stack((x, y)),
+                                                  [xy for p, r in zip(points, refs)
+                                                   for xy in (p.coords, r.coords)])
+                    self.assertEqual(lines.opts['connect'], 'pairs')
+                    self.assertTrue(lines.isVisible())
+                    self.assertGreater(items['label'].zValue(), lines.zValue())
+                    self.assertGreater(lines.zValue(), camera.img_item.zValue())
+
+                    # A new frame moves a label into the guess layer. It must not
+                    # retain its old marker or draw an error line to the guess.
+                    guess = Point('p0', (8, 9), 'guess_label')
+                    camera.set_annotations(FrameAnnotations((guess,), refs[:1], ()), 'p0')
+                    self.assertFalse(items['label'].isVisible())
+                    self.assertEqual(len(items['label'].points()), 0)
+                    np.testing.assert_array_equal(items['guess_label'].getData(), [[8], [9]])
+                    self.assertFalse(lines.isVisible())
+                    self.assertEqual(len(lines.getData()[0]), 0)
+
+                    camera.set_annotations(FrameAnnotations((), (), ()))
+                    for kind, item in items.items():
+                        self.assertIs(camera.marker_items[kind], item)
+                        self.assertFalse(item.isVisible())
+                        self.assertEqual(len(item.points()), 0)
+                    self.assertIs(camera.error_lines, lines)
+                    self.assertEqual(tuple(camera.plot_wget.items()), scene_items)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_batched_selection_reference_filter_and_annotation_deletion(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.annotations.set_point('nose', 0, 0, (1, 2), 'alice')
+            session.annotations.set_point('tail', 1, 0, (3, 4), 'alice')
+            session.references.set_point('nose', 0, 0, (5, 6), 'ref')
+            session.references.set_point('tail', 0, 0, (7, 8), 'ref')
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+
+            def assert_marker(kind, name, color, size):
+                spot = next(p for p in camera.marker_items[kind].points() if p.data() == name)
+                self.assertEqual(spot.brush().color(), QColor(color))
+                self.assertEqual(spot.size(), size)
+
+            try:
+                assert_marker('label', 'nose', 'darkgreen', 8)
+                assert_marker('guess_label', 'tail', 'cyan', 6)
+                assert_marker('ref_label', 'nose', 'red', 6)
+                window.set_current_label('tail')
+                assert_marker('label', 'nose', 'cyan', 6)
+                assert_marker('guess_label', 'tail', 'darkgreen', 8)
+                window.checkbox_disp_ref_annotated.setChecked(False)
+                self.assertEqual(len(camera.marker_items['ref_label'].points()), 2)
+                assert_marker('ref_label', 'tail', 'red', 6)
+                self.assertEqual(len(camera.error_lines.getData()[0]), 2)
+                window.checkbox_disp_ref_annotated.setChecked(True)
+                self.assertEqual(len(camera.marker_items['ref_label'].points()), 1)
+                window.set_current_label('nose')
+                window.viewer_click(1, 2, 0, 0, 'delete_label')
+                self.assertFalse(camera.marker_items['label'].isVisible())
+                self.assertFalse(camera.marker_items['ref_label'].isVisible())
+                self.assertFalse(camera.error_lines.isVisible())
+                camera.set_current_label(None)
+                assert_marker('guess_label', 'tail', 'cyan', 6)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
 
     def test_close_failure_keeps_window_and_session_open(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -126,18 +126,9 @@ class MainWindow(QMainWindow):
             window.frame_idx = self.session.frame_index(camera)
             if images:
                 window.redraw_frame()
-            window.clear_all_labels()
             view = self.session.frame_annotations(camera)
             window.label_labeler.setText(', '.join(view.labelers))
-            for point in (*view.points, *view.references):
-                window.draw_label(*point.coords, point.name, label_type=point.kind,
-                                  current_label=point.kind != 'ref_label' and point.name == self.session.current_label)
-            actual = {p.name: p.coords for p in view.points if p.kind == 'label'}
-            for reference in view.references:
-                if reference.name in actual:
-                    point = actual[reference.name]
-                    window.draw_line([point[0], reference.coords[0]], [point[1], reference.coords[1]],
-                                     reference.name)
+            window.set_annotations(view, self.session.current_label)
         self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.session.current_time, 6)))
         self._render_selection()
 

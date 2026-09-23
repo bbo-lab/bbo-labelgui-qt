@@ -26,14 +26,10 @@ class ViewerSubWindow(QDockWidget):
     """A camera view that can be docked, tabbed, or floated onto another screen."""
     mouse_clicked_signal = Signal(float, float, int, int, str)
     key_pressed_signal = Signal(object)
-    # Necessary to follow camelCase for keys here, for compatibility with pyqtgraph
-    plot_params = {
-        'label': {'symbol': 'o', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
-        'guess_label': {'symbol': '+', 'symbolBrush': 'cyan', 'symbolSize': 6, 'symbolPen': None},
-        'ref_label': {'symbol': 'x', 'symbolBrush': 'red', 'symbolSize': 6, 'symbolPen': None},
-
-        'current_label': {'symbolBrush': 'darkgreen', 'symbolSize': 8},
-        'error_line': {'color': 'red', 'width': 2}
+    marker_params = {
+        'label': {'symbol': 'o', 'brush': 'cyan', 'size': 6},
+        'guess_label': {'symbol': '+', 'brush': 'cyan', 'size': 6},
+        'ref_label': {'symbol': 'x', 'brush': 'red', 'size': 6},
     }
 
     def __init__(self, index: int, camera, parent=None, img_item=None):
@@ -49,7 +45,7 @@ class ViewerSubWindow(QDockWidget):
         self.img_item = img_item
         self.rot_angle = 0.0  # Clockwise angle in degrees
         self.frame_idx = None
-        self.labels = {label_key: {} for label_key in self.plot_params}
+        self.labels = {kind: {} for kind in self.marker_params}
         self.current_label_name = None
 
         main_widget = QWidget()
@@ -61,6 +57,22 @@ class ViewerSubWindow(QDockWidget):
         self.plot_wget.showAxes(False)  # whether to frame it with a full set of axes
         self.plot_wget.scene().sigMouseClicked.connect(self.mouse_clicked)
         main_layout.addWidget(self.plot_wget)
+
+        # Keep one scene item per marker type and reuse brushes for symbol caching.
+        self.marker_brushes = {kind: pg.mkBrush(params['brush'])
+                               for kind, params in self.marker_params.items()}
+        self.current_label_brush = pg.mkBrush('darkgreen')
+        self.marker_items = {}
+        for kind, params in self.marker_params.items():
+            item = pg.ScatterPlotItem(pen=None, pxMode=True, **params)
+            item.setZValue(10)
+            item.hide()
+            self.plot_wget.addItem(item)
+            self.marker_items[kind] = item
+        self.error_lines = pg.PlotCurveItem(pen=pg.mkPen('red', width=2), connect='pairs')
+        self.error_lines.setZValue(5)
+        self.error_lines.hide()
+        self.plot_wget.addItem(self.error_lines)
 
         # Contrast options
         bottom_widget = QWidget()
@@ -185,67 +197,42 @@ class ViewerSubWindow(QDockWidget):
         self.view_box.setTransformOriginPoint(local_center)
         self.view_box.setRotation(self.rot_angle)
 
-    def draw_label(self, x: float, y: float, label_name: str, label_type='label', current_label=False):
-        """
-           Draw a label on the plot widget at the specified coordinates.
+    def set_annotations(self, view, current_label=None):
+        """Replace a frame's coordinates without adding or removing scene items."""
+        self.labels = {kind: {} for kind in self.marker_items}
+        for point in (*view.points, *view.references):
+            self.labels[point.kind][point.name] = point.coords
+        self.current_label_name = current_label
+        for kind in self.marker_items:
+            self._update_markers(kind)
 
-           This method adds a label to the plot widget at the given (x, y) coordinates. If the label already exists,
-           it updates its position. Optionally, the label can be marked as the current label.
+        actual = self.labels['label']
+        segments = [(actual[name], coords) for name, coords in self.labels['ref_label'].items()
+                    if name in actual]
+        coords = np.asarray(segments, dtype=float).reshape(-1, 2)
+        self.error_lines.setData(coords[:, 0], coords[:, 1])
+        self.error_lines.setVisible(bool(segments))
 
-           Args:
-               x (float): The x-coordinate of the label.
-               y (float): The y-coordinate of the label.
-               label_name (str): The name of the label.
-               label_type (str, optional): The type of the label (default is 'label').
-               current_label (bool, optional): Whether to mark this label as the current label (default is False).
+    def _update_markers(self, kind):
+        labels = self.labels[kind]
+        selected = [kind != 'ref_label' and name == self.current_label_name for name in labels]
+        item = self.marker_items[kind]
+        item.setData(
+            pos=list(labels.values()), data=list(labels),
+            brush=[self.current_label_brush if active else self.marker_brushes[kind]
+                   for active in selected],
+            size=[8 if active else self.marker_params[kind]['size'] for active in selected],
+        )
+        item.setVisible(bool(labels))
 
-           Returns:
-               None
-        """
-        if label_name not in self.labels[label_type]:
-            label_params = self.plot_params[label_type].copy()
-            self.labels[label_type][label_name] = self.plot_wget.plot([x], [y], **label_params)
-            # The only way is to set this explicitly; all the point labels are set with a Z value of 10
-            self.labels[label_type][label_name].setZValue(10)
-        else:
-            self.labels[label_type][label_name].setData([x], [y])
-
-        if current_label:
-            self.set_current_label(label_name)
-
-    def draw_line(self, xs, ys, line_name: str, line_type='error_line'):
-        if line_name not in self.labels[line_type]:
-            line_params = self.plot_params[line_type].copy()
-            line_pen = pg.mkPen(**line_params)
-            self.labels[line_type][line_name] = self.plot_wget.plot(xs, ys, pen=line_pen)
-        else:
-            self.labels[line_type][line_name].setData(xs, ys)
-
-    def set_current_label(self, label_name: str or None):
-        """
-        Update the given label as current label, and demote the old current label
-        :param label_name: keyword
-        :return: None
-        """
-        for label_type in ['label', 'guess_label']:
-            # Change the status of the old 'current_label'
-            if self.current_label_name in self.labels[label_type]:
-                params = self.plot_params[label_type].copy()
-                self.labels[label_type][self.current_label_name].setSymbolBrush(params['symbolBrush'])
-                self.labels[label_type][self.current_label_name].setSymbolSize(params['symbolSize'])
-            # Set new 'current_label'
-            if label_name in self.labels[label_type]:
-                params = self.plot_params['current_label'].copy()
-                self.labels[label_type][label_name].setSymbolBrush(params['symbolBrush'])
-                self.labels[label_type][label_name].setSymbolSize(params['symbolSize'])
-
+    def set_current_label(self, label_name: str | None):
+        if label_name == self.current_label_name:
+            return
+        previous = self.current_label_name
         self.current_label_name = label_name
-
-    def get_labels(self, label_type: str = 'guess_label'):
-        labels_out = {}
-        for label_name, label in self.labels[label_type].items():
-            labels_out[label_name] = label.getData()
-        return labels_out
+        for kind in ('label', 'guess_label'):
+            if previous in self.labels[kind] or label_name in self.labels[kind]:
+                self._update_markers(kind)
 
     def mouse_clicked(self, event):
         """
@@ -316,13 +303,3 @@ class ViewerSubWindow(QDockWidget):
         self.box_vmin.valueChanged.connect(self.box_vmin_change)
         self.box_vmax.valueChanged.connect(self.box_vmax_change)
         self.checkbox_adjust_level.stateChanged.connect(self.redraw_frame)
-
-    def clear_label(self, label_name: str, label_type='label'):
-        # Remove the label from the dictionary and the view if it exists
-        label_item = self.labels[label_type].pop(label_name, None)
-        self.plot_wget.removeItem(label_item)
-
-    def clear_all_labels(self):
-        self.plot_wget.clearPlots()
-        self.labels = {label_key: {} for label_key in self.plot_params}
-        self.current_label_name = None
