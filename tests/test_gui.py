@@ -44,7 +44,7 @@ class GuiTests(unittest.TestCase):
                 point = camera.plot_wget.mapFromScene(camera.view_box.mapViewToScene(QPointF(3, 4)))
                 QTest.mouseClick(camera.plot_wget.viewport(), Qt.MouseButton.LeftButton, pos=point)
                 self.assertIsNotNone(session.annotations.point('nose', 0, 0))
-                self.assertIn('nose', camera.labels['label'])
+                self.assertIn('nose', [p.name for p in camera.labels['label']])
                 QTest.keyClick(camera.plot_wget, Qt.Key.Key_D)
                 self.assertEqual(session.current_time, .1)
                 self.assertEqual(window.subwindows[1].frame_idx, session.frame_index(1))
@@ -59,7 +59,7 @@ class GuiTests(unittest.TestCase):
                 self.app.processEvents()
                 self.assertFalse(camera.isFloating())
                 self.assertIs(window.subwindows[0], camera)
-                self.assertIn('nose', camera.labels['label'])
+                self.assertIn('nose', [p.name for p in camera.labels['label']])
                 # A docked camera must dispatch each shortcut just once as well.
                 QTest.keyClick(camera.plot_wget, Qt.Key.Key_D)
                 self.assertEqual(session.current_time, .1)
@@ -80,7 +80,7 @@ class GuiTests(unittest.TestCase):
                 buttons['next_labeled_time'].click()
                 self.assertEqual(session.current_time, .6)
                 self.assertEqual(window.subwindows[1].frame_idx, 1)
-                self.assertIn('tail', window.subwindows[1].labels['label'])
+                self.assertIn('tail', [p.name for p in window.subwindows[1].labels['label']])
                 with patch.object(window.synchronizer, 'publish') as publish:
                     buttons['next_labeled_time'].click()
                     self.assertEqual(session.current_time, 1.5)
@@ -152,7 +152,6 @@ class GuiTests(unittest.TestCase):
             session.config['allowed_cams'] = list(range(4))
             session.timeline = Timeline(session.timeline.camera_times * 2)
             session.annotations = AnnotationStore(4)
-            session.references = AnnotationStore(4)
             window = MainWindow(session=session, sync=False)
             try:
                 window.showNormal()
@@ -227,7 +226,7 @@ class GuiTests(unittest.TestCase):
             try:
                 window.viewer_click(3, 4, 0, 0)
                 self.assertEqual(session.annotations.point('nose', 0, 0), (3, 4))
-                self.assertIn('nose', window.subwindows[0].labels['label'])
+                self.assertIn('nose', [p.name for p in window.subwindows[0].labels['label']])
                 window.dock_sketch.list_labels.setCurrentRow(1)
                 self.assertEqual(session.current_label, 'tail')
                 window.dock_controls.widgets['buttons']['single_label_mode'].click()
@@ -300,8 +299,10 @@ class GuiTests(unittest.TestCase):
             session = make_session(folder)
             session.annotations.set_point('nose', 0, 0, (1, 2), 'alice')
             session.annotations.set_point('tail', 1, 0, (3, 4), 'alice')
-            session.references.set_point('nose', 0, 0, (5, 6), 'ref')
-            session.references.set_point('tail', 0, 0, (7, 8), 'ref')
+            reference = AnnotationStore(2)
+            reference.set_point('nose', 0, 0, (5, 6), 'ref')
+            reference.set_point('tail', 0, 0, (7, 8), 'ref')
+            session.references.append(reference)
             window = MainWindow(session=session, sync=False)
             camera = window.subwindows[0]
 
@@ -330,6 +331,46 @@ class GuiTests(unittest.TestCase):
                 self.assertFalse(camera.error_lines.isVisible())
                 camera.set_current_label(None)
                 assert_marker('guess_label', 'tail', 'cyan', 6)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_multiple_references_preserve_duplicate_names_and_selection(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.annotations.set_point('nose', 0, 0, (1, 2), 'alice')
+            for coords in ((5, 6), (9, 10)):
+                reference = AnnotationStore(2)
+                reference.set_point('nose', 0, 0, coords, 'ref')
+                session.references.append(reference)
+            session.references[1].set_point('tail', 0, 0, (7, 8), 'ref')
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+            try:
+                refs = camera.marker_items['ref_label']
+                np.testing.assert_array_equal(refs.getData(), [[5, 9], [6, 10]])
+                for point in refs.points():
+                    self.assertEqual(point.data(), 'nose')
+                    self.assertEqual(point.brush().color(), QColor('red'))
+                    self.assertEqual(point.symbol(), 'x')
+                    self.assertEqual(point.size(), 6)
+                np.testing.assert_array_equal(camera.error_lines.getData(),
+                                              [[1, 5, 1, 9], [2, 6, 2, 10]])
+                for x, y in ((5, 6), (9, 10)):
+                    window.set_current_label('tail')
+                    window.viewer_click(x, y, 0, 0, 'select_ref_label')
+                    self.assertEqual(session.current_label, 'nose')
+                window.checkbox_disp_ref_annotated.setChecked(False)
+                self.assertEqual(len(refs.points()), 3)
+                window.viewer_click(7, 8, 0, 0, 'select_ref_label')
+                self.assertEqual(session.current_label, 'tail')
+                window.checkbox_disp_ref_annotated.setChecked(True)
+                self.assertEqual(len(refs.points()), 2)
+                window.set_time(.5)
+                self.assertFalse(refs.isVisible())
+                self.assertEqual(len(refs.points()), 0)
+                self.assertFalse(camera.error_lines.isVisible())
             finally:
                 window.close()
                 window.deleteLater()

@@ -104,6 +104,9 @@ def load_configuration(path):
             continue
         if key == 'reference_labels_file' and value is True:
             continue
+        if key == 'reference_labels_file' and isinstance(value, list):
+            cfg[key] = [_path(item, key, path.parent) for item in value]
+            continue
         cfg[key] = _path(value, key, path.parent)
 
     cfg['video_times'] = _mapping(cfg['video_times'], 'video_times')

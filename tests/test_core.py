@@ -150,10 +150,10 @@ class AnnotationTests(unittest.TestCase):
         store.set_point('tail', 0, 1, (3, 4), 'bob')
         refs.set_point('nose', 0, 0, (2, 3), 'ref')
         refs.set_point('eye', 0, 0, (4, 5), 'ref')
-        view = store.frame_annotations(0, 0, refs)
+        view = store.frame_annotations(0, 0, [refs])
         self.assertEqual([p.name for p in view.references], ['nose'])
         self.assertEqual(view.labelers, ('alice',))
-        self.assertEqual(len(store.frame_annotations(0, 0, refs, False).references), 2)
+        self.assertEqual(len(store.frame_annotations(0, 0, [refs], False).references), 2)
 
 
 class PersistenceTests(unittest.TestCase):
@@ -222,7 +222,9 @@ class SessionTests(unittest.TestCase):
                 session.annotations.set_point('nose', 3, 0, (5, 6), 'alice')
                 session.annotations.set_point('nose', 2, 0, (7, 8), 'alice')
                 session.annotations.delete_point('nose', 2, 0, 'alice')
-                session.references.set_point('nose', 1, 0, (9, 10), 'ref')
+                reference = AnnotationStore(2)
+                reference.set_point('nose', 1, 0, (9, 10), 'ref')
+                session.references.append(reference)
                 self.assertFalse(session.step_labeled(-1))
                 self.assertEqual(session.current_time, 0)
                 self.assertTrue(session.step_labeled(1))

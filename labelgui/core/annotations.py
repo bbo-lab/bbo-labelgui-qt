@@ -127,7 +127,8 @@ class AnnotationStore:
         # Preserve the reference filter: annotated in any camera at this frame.
         names = label_lib.get_labels_from_frame(self.data, frame) if only_annotated else None
         refs = tuple(Point(p.name, p.coords, 'ref_label')
-                     for p in references.points(frame, camera, include_guesses=False)
+                     for reference in references
+                     for p in reference.points(frame, camera, include_guesses=False)
                      if names is None or p.name in names)
         return FrameAnnotations(self.points(frame, camera), refs,
                                 tuple(label_lib.get_frame_labelers(self.data, frame, cam_idx=camera)))

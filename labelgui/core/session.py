@@ -67,7 +67,7 @@ class LabelingSession:
         self.timeline = timeline
         self.labels_folder = Path(labels_folder)
         self.annotations = annotations if annotations is not None else AnnotationStore(len(cameras))
-        self.references = references if references is not None else AnnotationStore(len(cameras))
+        self.references = references if references is not None else []
         self.saver = saver if saver is not None else SaveService()
         self.current_sketch_index = 0
         self.current_label = next(iter(self.sketch.locations))
@@ -117,14 +117,16 @@ class LabelingSession:
             ref_source = cfg['reference_labels_file']
             if ref_source is True:
                 ref_source = drive / 'data' / 'references' / f'{dataset}.yml'
-            ref_labels = None
-            if isinstance(ref_source, (str, Path)):
-                if Path(ref_source).is_file():
-                    ref_labels = repository.load(ref_source)
+            ref_sources = ref_source if isinstance(ref_source, list) else [ref_source]
+            references = []
+            for source in ref_sources:
+                if source is None or source is False:
+                    continue
+                if Path(source).is_file():
+                    references.append(AnnotationStore(len(cameras), repository.load(source)))
                 else:
-                    logger.warning('Reference labels do not exist: %s', ref_source)
+                    logger.warning('Reference labels do not exist: %s', source)
             annotations = AnnotationStore(len(cameras), labels)
-            references = AnnotationStore(len(cameras), ref_labels)
             resume_time = load_resume_time(folder)
             if resume_time in timeline.times:
                 timeline.seek(resume_time)

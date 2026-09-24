@@ -45,7 +45,7 @@ class ViewerSubWindow(QDockWidget):
         self.img_item = img_item
         self.rot_angle = 0.0  # Clockwise angle in degrees
         self.frame_idx = None
-        self.labels = {kind: {} for kind in self.marker_params}
+        self.labels = {kind: [] for kind in self.marker_params}
         self.current_label_name = None
 
         main_widget = QWidget()
@@ -216,26 +216,26 @@ class ViewerSubWindow(QDockWidget):
 
     def set_annotations(self, view, current_label=None):
         """Replace a frame's coordinates without adding or removing scene items."""
-        self.labels = {kind: {} for kind in self.marker_items}
+        self.labels = {kind: [] for kind in self.marker_items}
         for point in (*view.points, *view.references):
-            self.labels[point.kind][point.name] = point.coords
+            self.labels[point.kind].append(point)
         self.current_label_name = current_label
         for kind in self.marker_items:
             self._update_markers(kind)
 
-        actual = self.labels['label']
-        segments = [(actual[name], coords) for name, coords in self.labels['ref_label'].items()
-                    if name in actual]
+        actual = {point.name: point.coords for point in self.labels['label']}
+        segments = [(actual[point.name], point.coords) for point in self.labels['ref_label']
+                    if point.name in actual]
         coords = np.asarray(segments, dtype=float).reshape(-1, 2)
         self.error_lines.setData(coords[:, 0], coords[:, 1])
         self.error_lines.setVisible(bool(segments))
 
     def _update_markers(self, kind):
         labels = self.labels[kind]
-        selected = [kind != 'ref_label' and name == self.current_label_name for name in labels]
+        selected = [kind != 'ref_label' and point.name == self.current_label_name for point in labels]
         item = self.marker_items[kind]
         item.setData(
-            pos=list(labels.values()), data=list(labels),
+            pos=[point.coords for point in labels], data=[point.name for point in labels],
             brush=[self.current_label_brush if active else self.marker_brushes[kind]
                    for active in selected],
             size=[8 if active else self.marker_params[kind]['size'] for active in selected],
@@ -248,7 +248,7 @@ class ViewerSubWindow(QDockWidget):
         previous = self.current_label_name
         self.current_label_name = label_name
         for kind in ('label', 'guess_label'):
-            if previous in self.labels[kind] or label_name in self.labels[kind]:
+            if any(point.name in (previous, label_name) for point in self.labels[kind]):
                 self._update_markers(kind)
 
     def mouse_clicked(self, event):

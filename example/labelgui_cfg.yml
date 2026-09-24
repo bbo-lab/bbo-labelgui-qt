@@ -42,8 +42,12 @@ video_times:
 # A filename instead loads that label file as the starting point.
 load_labels_file: null
 # false/null: no references. true: <base>/data/references/<dataset_name>.yml.
-# A filename instead loads references from that path.
+# A filename or list of filenames loads references from those paths.
+# All files use the same marker style; matching landmark names are shown together.
 reference_labels_file: false
+# reference_labels_file:
+#   - references/labels_1.yml
+#   - references/labels_2.yml
 
 sketch_zoom_scale: 0.1  # Zoom radius as a fraction of the larger image dimension.
 exit_save_labels: true

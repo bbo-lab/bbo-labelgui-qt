@@ -9,6 +9,8 @@ import yaml
 
 from labelgui.core.configuration import load_configuration, job_config_path
 from labelgui.core.jobs import JobRepository
+from labelgui.core.annotations import AnnotationStore
+from labelgui.core.persistence import LabelRepository
 from labelgui.core.session import LabelingSession
 from test_core import FakeReader
 
@@ -67,6 +69,55 @@ class ConfigurationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'must be YAML'):
                 load_configuration(path)
             loader.assert_not_called()
+
+    def test_reference_file_lists_resolve_paths_and_validate_entries(self):
+        paths = ['references/first.yml', str(self.root / 'second.yml')]
+        cfg = load_configuration(self.write_config(self.minimal | {'reference_labels_file': paths}))
+        self.assertEqual(cfg['reference_labels_file'],
+                         [str(self.root / 'references/first.yml'), str(self.root / 'second.yml')])
+        cfg = load_configuration(self.write_config(self.minimal | {'reference_labels_file': []}))
+        self.assertEqual(cfg['reference_labels_file'], [])
+        for value in ([None], [False], [True], [1], [' '], [['nested.yml']]):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'reference_labels_file'):
+                load_configuration(self.write_config(self.minimal | {'reference_labels_file': value}))
+
+    def test_session_loads_all_reference_files_and_legacy_options(self):
+        sketch = Path(__file__).resolve().parents[1] / 'example/sketch.yml'
+        repository = LabelRepository()
+        for name, coords in [('first.yml', (1, 2)), ('second.yml', (3, 4))]:
+            store = AnnotationStore(2)
+            store.set_point('eye', 0, 0, coords, 'ref')
+            repository.save(self.root / name, store.data)
+        default = self.root / 'data/references/test.yml'
+        default.parent.mkdir(parents=True)
+        shutil.copy(self.root / 'first.yml', default)
+        cases = [(['first.yml', 'second.yml'], [(1, 2), (3, 4)]),
+                 ('first.yml', [(1, 2)]), (True, [(1, 2)]),
+                 (False, []), (None, []), ([], [])]
+        for source, expected in cases:
+            with self.subTest(source=source):
+                cfg = self.minimal | {'sketch_files': [str(sketch)], 'dataset_name': 'test',
+                                      'exit_save_labels': False, 'reference_labels_file': source}
+                session = LabelingSession.open(self.root, 'alice', self.write_config(cfg),
+                                               reader_factory=lambda _: FakeReader())
+                try:
+                    session.only_annotated_references = False
+                    self.assertEqual([p.coords for p in session.frame_annotations(0).references], expected)
+                    self.assertEqual(session.frame_annotations(1).references, ())
+                    processed = session.labels_folder / 'backup/labelgui_cfg_processed.yml'
+                    self.assertEqual(load_configuration(processed), session.config)
+                finally:
+                    session.close()
+        cfg['reference_labels_file'] = ['missing.yml', 'second.yml']
+        with self.assertLogs('labelgui.core.session', level='WARNING') as logs:
+            session = LabelingSession.open(self.root, 'alice', self.write_config(cfg),
+                                           reader_factory=lambda _: FakeReader())
+        try:
+            self.assertIn('missing.yml', logs.output[0])
+            session.only_annotated_references = False
+            self.assertEqual([p.coords for p in session.frame_annotations(0).references], [(3, 4)])
+        finally:
+            session.close()
 
     def test_invalid_yaml_and_missing_fields(self):
         for data in (None, [], 'text', 42, {}, {'recording_folder': 'recordings'}):
