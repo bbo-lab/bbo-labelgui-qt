@@ -23,19 +23,66 @@ class Camera:
     path: Path
     reader: object
     metadata: dict
+    filter_string: str = ''
 
     def frame(self, index):
-        return self.reader.get_data(index).copy()
+        frame = self.reader.get_data(index).copy()
+        if (frame.ndim not in (2, 3) or not all(frame.shape)
+                or (frame.ndim == 3 and frame.shape[2] not in (1, 3, 4))):
+            raise ValueError('Video filters must produce grayscale, RGB, or RGBA images')
+        return frame
 
     def intensity_range(self):
-        dtype = self.reader.get_data(0).dtype
-        limits = np.iinfo(dtype)
-        return int(limits.min), int(limits.max)
+        frame = self.frame(0)
+        if np.issubdtype(frame.dtype, np.integer):
+            limits = np.iinfo(frame.dtype)
+            return int(limits.min), int(limits.max)
+        if np.issubdtype(frame.dtype, np.bool_):
+            return 0, 1
+        if np.issubdtype(frame.dtype, np.floating):
+            values = frame[np.isfinite(frame)]
+            if len(values):
+                low, high = float(values.min()), float(values.max())
+                return low, high if high > low else low + 1
+        raise ValueError('Video filters must produce images with finite numeric intensities')
+
+    @classmethod
+    def open(cls, path, filter_string, reader_factory):
+        source = f'{path}|{filter_string}' if filter_string else path
+        camera = cls(path, reader_factory(source), {}, filter_string)
+        try:
+            camera.metadata = misc.read_video_meta(camera.reader)
+            camera.intensity_range()
+            return camera
+        except Exception:
+            camera.close()
+            raise
+
+    def close(self):
+        close = getattr(self.reader, 'close', None)
+        if close is not None:
+            try:
+                # svidreader caches need recursive closing to release the decoder.
+                if 'recursive' in inspect.signature(close).parameters:
+                    close(recursive=True)
+                else:
+                    close()
+            except Exception:
+                logger.exception('Could not close video reader %s', self.path)
 
 
 def open_reader(path):
     import svidreader
-    return svidreader.get_reader(str(path), backend='iio', cache=True)
+    from svidreader.filtergraph import create_filtergraph_from_string
+    filename, _, filter_string = str(path).partition('|')
+    reader = svidreader.get_reader(filename, backend='iio', cache=True)
+    if not filter_string:
+        return reader
+    try:
+        return create_filtergraph_from_string([reader], filter_string)['out']
+    except Exception:
+        reader.close(recursive=True)
+        raise
 
 
 def camera_timestamps(reader, metadata, settings):
@@ -59,10 +106,11 @@ class LabelingSession:
     Widgets receive frame/overlay data and never mutate annotation dictionaries.
     """
     def __init__(self, *, user, config, cameras, sketches, timeline, labels_folder,
-                 annotations=None, references=None, saver=None):
+                 annotations=None, references=None, saver=None, reader_factory=open_reader):
         self.user = user
         self.config = config
         self.cameras = cameras
+        self.reader_factory = reader_factory
         self.sketches = sketches
         self.timeline = timeline
         self.labels_folder = Path(labels_folder)
@@ -86,11 +134,9 @@ class LabelingSession:
         cameras = []
         try:
             for filename in cfg['recording_filenames']:
+                filename, _, filter_string = filename.partition('|')
                 path = path_management.decode_path(Path(cfg['recording_folder']) / filename).expanduser().resolve()
-                reader = reader_factory(path)
-                camera = Camera(path, reader, {})
-                cameras.append(camera)
-                camera.metadata = misc.read_video_meta(reader)
+                cameras.append(Camera.open(path, filter_string, reader_factory))
             timeline = Timeline([camera_timestamps(c.reader, c.metadata, cfg['video_times'].get(i, {}))
                                  for i, c in enumerate(cameras)], float(cfg['min_time']), float(cfg['max_time']))
             sketches = []
@@ -132,7 +178,7 @@ class LabelingSession:
                 timeline.seek(resume_time)
             return cls(user=user, config=cfg, cameras=cameras, sketches=sketches,
                        timeline=timeline, labels_folder=folder, annotations=annotations,
-                       references=references, saver=SaveService(repository))
+                       references=references, saver=SaveService(repository), reader_factory=reader_factory)
         except Exception:
             cls._close_cameras(cameras)
             raise
@@ -201,6 +247,40 @@ class LabelingSession:
         if not math.isfinite(value):
             raise ValueError("Time step must be finite")
         self.d_time = value
+
+    def set_video_filters(self, filters):
+        """Replace changed readers only after all new readers and timestamps work."""
+        if len(filters) != len(self.cameras) or any(not isinstance(value, str) for value in filters):
+            raise ValueError('Provide one filter string per camera')
+        changed = [i for i, camera in enumerate(self.cameras) if filters[i] != camera.filter_string]
+        if not changed:
+            return False
+        replacements = {}
+        try:
+            for index in changed:
+                replacements[index] = Camera.open(self.cameras[index].path, filters[index], self.reader_factory)
+            cameras = [replacements.get(i, camera) for i, camera in enumerate(self.cameras)]
+            timeline = Timeline([
+                camera_timestamps(camera.reader, camera.metadata, self.config.get('video_times', {}).get(i, {}))
+                if i in replacements else self.timeline.camera_times[i]
+                for i, camera in enumerate(cameras)
+            ], self.config.get('min_time', -math.inf), self.config.get('max_time', math.inf))
+            timeline.seek(self.current_time)
+            for index, camera in replacements.items():
+                camera.frame(timeline.frame_index(index))
+        except Exception:
+            self._close_cameras(replacements.values())
+            raise
+        old_cameras = [self.cameras[index] for index in changed]
+        self.cameras = cameras
+        self.timeline = timeline
+        filenames = self.config.get('recording_filenames', [str(camera.path) for camera in cameras])
+        self.config['recording_filenames'] = [
+            filename.partition('|')[0] + (f'|{value}' if value else '')
+            for filename, value in zip(filenames, filters)
+        ]
+        self._close_cameras(old_cameras)
+        return True
 
     def handle_video_action(self, camera, frame, coords, action):
         # Ignore stale mouse events after a frame change.
@@ -278,13 +358,4 @@ class LabelingSession:
     @staticmethod
     def _close_cameras(cameras):
         for camera in cameras:
-            close = getattr(camera.reader, 'close', None)
-            if close is not None:
-                try:
-                    # svidreader caches need recursive closing to release the decoder.
-                    if 'recursive' in inspect.signature(close).parameters:
-                        close(recursive=True)
-                    else:
-                        close()
-                except Exception:
-                    logger.exception('Could not close video reader %s', camera.path)
+            camera.close()

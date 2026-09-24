@@ -14,6 +14,7 @@ from labelgui.select_user import SelectUserWindow
 from .controls_dock import ControlsDock
 from .sketch_dock import SketchDock
 from .viewer_sub_window import ViewerSubWindow
+from .video_filters_dialog import VideoFiltersDialog
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class MainWindow(QMainWindow):
         menu.addAction('&Tab (single cam view)', lambda: self.arrange_cameras('tab_view'))
         menu.addAction('&Tile', lambda: self.arrange_cameras('tile_view'))
         menu.addAction('&Dock All Cameras', self.dock_all_cameras)
+        menu.addAction('Video &Filters...', self.edit_video_filters)
         trajectories = menu.addMenu('&Trajectories')
         self.trajectory_actions = QActionGroup(self)
         self.trajectory_actions.setExclusive(True)
@@ -265,6 +267,34 @@ class MainWindow(QMainWindow):
             window.rotate_view(0)
             window.rotate_view(angle)
             window.plot_wget.autoRange()
+
+    def edit_video_filters(self):
+        dialog = VideoFiltersDialog(self.session.cameras, self)
+        try:
+            while dialog.exec() == VideoFiltersDialog.DialogCode.Accepted:
+                if self.apply_video_filters(dialog.filters):
+                    break
+        finally:
+            dialog.deleteLater()
+
+    def apply_video_filters(self, filters):
+        previous_time = self.session.current_time
+        try:
+            changed = self.session.set_video_filters(filters)
+        except Exception as error:
+            logger.exception('Could not apply video filters')
+            QMessageBox.critical(self, 'Could not apply video filters', str(error))
+            return False
+        if changed:
+            for index, window in self.subwindows.items():
+                camera = self.session.cameras[index]
+                if window.camera is not camera:
+                    window.set_camera(camera, self.session.frame_index(index))
+            self._trajectory_key = None
+            self._render_frame()
+            if self.session.current_time != previous_time:
+                self.synchronizer.publish(self.session.current_time)
+        return True
 
     def arrange_cameras(self, mode):
         """Arrange docked cameras without disturbing floating windows."""

@@ -15,7 +15,7 @@ from labelgui.core.annotations import AnnotationStore
 from labelgui.core.configuration import job_config_path
 from labelgui.core.jobs import JobRepository
 from labelgui.core.persistence import LabelRepository, SaveService
-from labelgui.core.session import Camera, LabelingSession, camera_timestamps
+from labelgui.core.session import Camera, LabelingSession, camera_timestamps, open_reader
 from labelgui.core.sketch import Sketch
 from labelgui.core.synchronization import TimeSynchronizer
 from labelgui.core.timeline import Timeline
@@ -36,6 +36,23 @@ class FakeReader:
 
     def close(self):
         self.closed = True
+
+
+class FilteredReader(FakeReader):
+    def __len__(self):
+        return 3
+
+    def get_data(self, frame):
+        if not 0 <= frame < len(self):
+            raise IndexError(frame)
+        return np.linspace(0, 1, 48, dtype=np.float32).reshape(6, 8)
+
+    def get_meta_data(self):
+        return {'fps': 4}
+
+    def close(self, recursive=False):
+        self.closed = True
+        self.recursive = recursive
 
 
 def make_session(folder, **config):
@@ -213,6 +230,89 @@ class PersistenceTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_video_filter_replacement_refreshes_timeline_and_keeps_labels(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder, video_times={1: {'offset': .1}})
+            session.seek(2.1)
+            session.annotations.set_point('nose', 0, 0, (1, 2), 'alice')
+            annotations = session.annotations
+            originals = list(session.cameras)
+            replacements = [FilteredReader(), FilteredReader()]
+            session.reader_factory = Mock(side_effect=replacements)
+            try:
+                self.assertTrue(session.set_video_filters(['crop=size=8x6', 'math=exp="out=i0/255"']))
+                self.assertEqual(session.current_time, .6)
+                np.testing.assert_allclose(session.timeline.camera_times[0], [0, .25, .5])
+                np.testing.assert_allclose(session.timeline.camera_times[1], [.1, .35, .6])
+                self.assertTrue(all(camera.reader.closed for camera in originals))
+                self.assertIs(session.annotations, annotations)
+                self.assertEqual(annotations.point('nose', 0, 0), (1, 2))
+                self.assertEqual(session.cameras[0].metadata['sensorsize'], (8, 6, 1))
+                self.assertEqual(session.cameras[0].intensity_range(), (0., 1.))
+                session.reader_factory.assert_any_call('cam0.avi|crop=size=8x6')
+                self.assertFalse(session.set_video_filters(['crop=size=8x6', 'math=exp="out=i0/255"']))
+                self.assertEqual(session.reader_factory.call_count, 2)
+                restored = FakeReader()
+                session.reader_factory = Mock(return_value=restored)
+                self.assertTrue(session.set_video_filters(['', 'math=exp="out=i0/255"']))
+                session.reader_factory.assert_called_once_with(Path('cam0.avi'))
+                self.assertTrue(replacements[0].recursive)
+                self.assertFalse(replacements[1].closed)
+                self.assertEqual(session.cameras[0].filter_string, '')
+                self.assertEqual(session.config['recording_filenames'][0], 'cam0.avi')
+            finally:
+                session.close()
+
+    def test_invalid_video_filters_leave_original_readers_and_timeline_usable(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            original_cameras, original_timeline = session.cameras, session.timeline
+            first = FilteredReader()
+            session.reader_factory = Mock(side_effect=[first, ValueError('bad filter')])
+            try:
+                with self.assertRaisesRegex(ValueError, 'bad filter'):
+                    session.set_video_filters(['good', 'bad'])
+                self.assertTrue(first.closed)
+                self.assertTrue(first.recursive)
+                self.assertIs(session.cameras, original_cameras)
+                self.assertIs(session.timeline, original_timeline)
+                self.assertTrue(all(not camera.reader.closed for camera in session.cameras))
+                bad_frame = FilteredReader()
+                bad_frame.get_data = Mock(side_effect=ValueError('bad frame'))
+                session.reader_factory = Mock(return_value=bad_frame)
+                with self.assertRaisesRegex(ValueError, 'bad frame'):
+                    session.set_video_filters(['bad', ''])
+                self.assertTrue(bad_frame.closed)
+                timestamps = Path(folder) / 'times.csv'
+                timestamps.write_text('time\n0\n1\n2\n3\n4\n')
+                session.config['video_times'] = {0: {'file': timestamps}}
+                short = FilteredReader()
+                session.reader_factory = Mock(return_value=short)
+                with self.assertRaisesRegex(ValueError, 'Timestamp count'):
+                    session.set_video_filters(['short', ''])
+                self.assertTrue(short.closed)
+                self.assertIs(session.timeline, original_timeline)
+                self.assertEqual(session.cameras[0].filter_string, '')
+                session.step(1)
+                self.assertEqual(session.current_time, .1)
+            finally:
+                session.close()
+
+    def test_real_svidreader_filters_crop_and_float_output(self):
+        from imageio.v3 import imwrite
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'frame.png'
+            imwrite(path, np.arange(192, dtype=np.uint8).reshape(12, 16))
+            pipeline = 'crop=size=8x6;math=exp="out=i0/255"'
+            camera = Camera.open(path, pipeline, open_reader)
+            try:
+                self.assertEqual(camera.frame(0).shape[:2], (6, 8))
+                self.assertEqual(camera.frame(0).dtype, np.float64)
+                self.assertEqual(camera.filter_string, pipeline)
+                self.assertEqual(camera.path, path)
+            finally:
+                camera.close()
+
     def test_labeled_navigation_uses_marked_camera_timestamps(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder, d_time=10)

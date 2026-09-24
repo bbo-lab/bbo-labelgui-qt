@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -184,6 +184,25 @@ class ConfigurationTests(unittest.TestCase):
         repository.complete_job('alice', 'job')
         self.assertEqual(repository.jobs('alice'), [])
         self.assertEqual(len(list((jobs / 'done').iterdir())), 1)
+
+    def test_recording_filter_is_saved_separately_from_resolved_path(self):
+        sketch = Path(__file__).resolve().parents[1] / 'example/sketch.yml'
+        pipeline = 'math=exp="out=i0/2";crop=size=8x6'
+        cfg = self.minimal | {'sketch_files': [str(sketch)], 'exit_save_labels': False,
+                              'recording_filenames': [f'cam0.mp4|{pipeline}', 'cam1.mp4']}
+        factory = Mock(side_effect=lambda _: FakeReader())
+        session = LabelingSession.open(self.root, 'alice', self.write_config(cfg), reader_factory=factory)
+        try:
+            path = self.root / 'recordings/cam0.mp4'
+            self.assertEqual(session.cameras[0].path, path)
+            self.assertEqual(session.cameras[0].filter_string, pipeline)
+            self.assertEqual(session.cameras[1].filter_string, '')
+            factory.assert_any_call(f'{path}|{pipeline}')
+            factory.reset_mock()
+            session.set_video_filters(['', ''])
+            factory.assert_called_once_with(path)
+        finally:
+            session.close()
 
     def test_example_opens_and_archives_normalized_yaml(self):
         example = Path(__file__).resolve().parents[1] / 'example'

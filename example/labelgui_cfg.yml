@@ -5,6 +5,8 @@
 
 # Required: recording folder, ordered camera filenames, and at least one sketch.
 recording_folder: recordings
+# Append | followed by an svidreader filter pipeline, e.g. "camera_0.mp4|crop=size=640x480".
+# View > Video Filters edits each pipeline for the current session.
 recording_filenames:
   - camera_0.mp4
   - camera_1.mp4

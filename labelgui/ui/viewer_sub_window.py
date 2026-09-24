@@ -1,8 +1,8 @@
 import logging
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtWidgets import QApplication, QDockWidget, QLabel, QSpinBox, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton
+from PySide6.QtCore import Qt, Signal, QTimer, QSignalBlocker
+from PySide6.QtWidgets import QApplication, QDockWidget, QLabel, QDoubleSpinBox, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton
 import pyqtgraph as pg
 
 logger = logging.getLogger(__name__)
@@ -92,13 +92,13 @@ class ViewerSubWindow(QDockWidget):
         bottom_layout.addWidget(self.checkbox_adjust_level)
 
         self.label_vmin = QLabel("vmin")
-        self.box_vmin = QSpinBox()
+        self.box_vmin = QDoubleSpinBox()
         self.box_vmin.setKeyboardTracking(False)
         bottom_layout.addWidget(self.label_vmin)
         bottom_layout.addWidget(self.box_vmin)
 
         self.label_vmax = QLabel("vmax")
-        self.box_vmax = QSpinBox()
+        self.box_vmax = QDoubleSpinBox()
         self.box_vmax.setKeyboardTracking(False)
         bottom_layout.addWidget(self.label_vmax)
         bottom_layout.addWidget(self.box_vmax)
@@ -168,6 +168,13 @@ class ViewerSubWindow(QDockWidget):
         if not event.isAccepted():
             super().keyPressEvent(event)
 
+    def set_camera(self, camera, frame_index):
+        self.camera = camera
+        self.frame_idx = frame_index
+        self.set_intensity_range()
+        self.redraw_frame()
+        self.plot_wget.autoRange()
+
     def redraw_frame(self):
         if self.frame_idx is None:
             if self.img_item is not None:
@@ -176,6 +183,8 @@ class ViewerSubWindow(QDockWidget):
 
         img = self.camera.frame(self.frame_idx)
         levels = [self.box_vmin.value(), self.box_vmax.value()]
+        if np.issubdtype(img.dtype, np.integer):
+            levels = [int(value) for value in levels]
         img = np.clip(img, *levels)
 
         adjust_level = self.checkbox_adjust_level.isChecked()
@@ -187,15 +196,15 @@ class ViewerSubWindow(QDockWidget):
             self.plot_wget.addItem(self.img_item)
             self.plot_wget.setAspectLocked(True)
 
-            img_y, img_x = img.shape[:2]  # np.rot90(img, k = self.rotate // 90).shape[:2]
-            max_size = max(img.shape[:2])
-            self.plot_wget.setLimits(xMin=(img_x - max_size) / 2,
-                                     xMax=(img_x + max_size) / 2,
-                                     yMin=(img_y - max_size) / 2,
-                                     yMax=(img_y + max_size) / 2)
-
         else:
             self.img_item.setImage(img, levels=levels)
+
+        img_y, img_x = img.shape[:2]
+        max_size = max(img_x, img_y)
+        self.plot_wget.setLimits(xMin=(img_x - max_size) / 2,
+                                 xMax=(img_x + max_size) / 2,
+                                 yMin=(img_y - max_size) / 2,
+                                 yMax=(img_y + max_size) / 2)
 
     def rotate_view(self, rot_angle: None | float = None):
         if rot_angle is not None:
@@ -299,22 +308,24 @@ class ViewerSubWindow(QDockWidget):
 
     def set_intensity_range(self):
         min_int, max_int = self.camera.intensity_range()
-        self.box_vmin.setRange(min_int, max_int)
-        self.box_vmin.setValue(min_int)
-        self.box_vmax.setRange(min_int, max_int)
-        self.box_vmax.setValue(max_int)
+        with QSignalBlocker(self.box_vmin), QSignalBlocker(self.box_vmax):
+            for field in (self.box_vmin, self.box_vmax):
+                field.setDecimals(0 if isinstance(min_int, int) else 6)
+                field.setRange(min_int, max_int)
+            self.box_vmin.setValue(min_int)
+            self.box_vmax.setValue(max_int)
 
-    def box_vmin_change(self, value: int):
+    def box_vmin_change(self, value: float):
         if value < self.box_vmax.value():
             self.redraw_frame()
         else:
-            self.box_vmin.setValue(self.box_vmax.value() - 1)
+            self.box_vmin.setValue(self.box_vmax.value() - 10 ** -self.box_vmin.decimals())
 
-    def box_vmax_change(self, value: int):
+    def box_vmax_change(self, value: float):
         if value > self.box_vmin.value():
             self.redraw_frame()
         else:
-            self.box_vmax.setValue(self.box_vmin.value() + 1)
+            self.box_vmax.setValue(self.box_vmin.value() + 10 ** -self.box_vmax.decimals())
 
     def connect_controls(self):
         self.box_vmin.valueChanged.connect(self.box_vmin_change)

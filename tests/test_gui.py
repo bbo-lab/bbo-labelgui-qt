@@ -14,17 +14,78 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDockWidget
 
 from labelgui.ui.main_window import MainWindow
+from labelgui.ui.video_filters_dialog import VideoFiltersDialog
 from labelgui.select_user import SelectUserWindow
 from labelgui.core.jobs import JobRepository
 from labelgui.core.annotations import AnnotationStore, FrameAnnotations, Point
 from labelgui.core.timeline import Timeline
-from test_core import make_session
+from test_core import FilteredReader, make_session
 
 
 class GuiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_video_filters_refresh_existing_views_and_dialog(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.cameras[0].filter_string = 'old_filter'
+            session.seek(2.1)
+            session.annotations.set_point('nose', 2, 0, (1, 2), 'alice')
+            window = MainWindow(session=session, sync=False)
+            first, second = window.subwindows.values()
+            image = first.img_item
+            try:
+                self.app.processEvents()
+                second.setFloating(True)
+                self.app.processEvents()
+                dialog = VideoFiltersDialog(session.cameras, window)
+                self.assertEqual(dialog.filters, ['old_filter', ''])
+                dialog.fields[0].setText('crop=size=8x6')
+                self.assertEqual(dialog.filters, ['crop=size=8x6', ''])
+                dialog.deleteLater()
+                with patch.object(session, 'reader_factory', side_effect=lambda _: FilteredReader()), \
+                        patch.object(window.synchronizer, 'publish') as publish:
+                    self.assertTrue(window.apply_video_filters(['crop=size=8x6', 'crop=size=8x6']))
+                    publish.assert_called_once_with(.5)
+                self.assertIs(window.subwindows[0], first)
+                self.assertIs(first.img_item, image)
+                self.assertTrue(second.isFloating())
+                self.assertIs(first.camera, session.cameras[0])
+                self.assertEqual(first.frame_idx, 2)
+                self.assertEqual(first.img_item.image.shape, (6, 8))
+                self.assertEqual(first.box_vmax.maximum(), 1.)
+                self.assertEqual(first.box_vmin.decimals(), 6)
+                self.assertEqual(first.view_box.state['limits']['xLimits'], [0., 8.])
+                self.assertEqual(first.view_box.state['limits']['yLimits'], [-1., 7.])
+                self.assertEqual(window.dock_controls.widgets['fields']['current_time'].text(), '0.5')
+                self.assertEqual(len(first.marker_items['label'].points()), 1)
+                first.box_vmin.setValue(.25)
+                self.assertEqual(first.box_vmin.value(), .25)
+                original_camera = first.camera
+                with patch.object(session, 'reader_factory', side_effect=ValueError('invalid filter')), \
+                        patch('labelgui.ui.main_window.QMessageBox.critical') as error, \
+                        self.assertLogs('labelgui.ui.main_window', level='ERROR'):
+                    self.assertFalse(window.apply_video_filters(['invalid', 'crop=size=8x6']))
+                    error.assert_called_once()
+                self.assertIs(first.camera, original_camera)
+                self.assertFalse(original_camera.reader.closed)
+                with patch('labelgui.ui.main_window.VideoFiltersDialog') as dialog_type, \
+                        patch.object(window, 'apply_video_filters', return_value=True) as apply:
+                    dialog_type.return_value.exec.return_value = VideoFiltersDialog.DialogCode.Accepted
+                    dialog_type.DialogCode.Accepted = VideoFiltersDialog.DialogCode.Accepted
+                    dialog_type.return_value.filters = ['', '']
+                    window.edit_video_filters()
+                    apply.assert_called_once_with(['', ''])
+                with patch.object(VideoFiltersDialog, 'exec', return_value=VideoFiltersDialog.DialogCode.Rejected), \
+                        patch.object(session, 'set_video_filters') as change:
+                    window.edit_video_filters()
+                    change.assert_not_called()
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
 
     def test_floating_camera_keeps_annotation_and_keyboard_connections(self):
         with tempfile.TemporaryDirectory() as folder:
