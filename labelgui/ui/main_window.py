@@ -284,16 +284,14 @@ class MainWindow(QMainWindow):
             docks[0].raise_()
         else:
             columns = math.ceil(math.sqrt(len(docks)))
-            row_heads = []
-            for index, dock in enumerate(docks):
-                if index % columns == 0:
-                    if row_heads:
-                        workspace.splitDockWidget(row_heads[-1], dock, Qt.Orientation.Vertical)
-                    row_heads.append(dock)
-                else:
-                    workspace.splitDockWidget(docks[index - 1], dock, Qt.Orientation.Horizontal)
+            row_heads = docks[::columns]
+            # Create full-width rows before subdividing each row into columns.
+            for above, below in zip(row_heads, row_heads[1:]):
+                workspace.splitDockWidget(above, below, Qt.Orientation.Vertical)
             for start in range(0, len(docks), columns):
                 row = docks[start:start + columns]
+                for left, right in zip(row, row[1:]):
+                    workspace.splitDockWidget(left, right, Qt.Orientation.Horizontal)
                 workspace.resizeDocks(row, [1] * len(row), Qt.Orientation.Horizontal)
             workspace.resizeDocks(row_heads, [1] * len(row_heads), Qt.Orientation.Vertical)
 

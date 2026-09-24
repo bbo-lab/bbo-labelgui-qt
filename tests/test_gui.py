@@ -16,7 +16,8 @@ from PySide6.QtWidgets import QApplication, QDockWidget
 from labelgui.ui.main_window import MainWindow
 from labelgui.select_user import SelectUserWindow
 from labelgui.core.jobs import JobRepository
-from labelgui.core.annotations import FrameAnnotations, Point
+from labelgui.core.annotations import AnnotationStore, FrameAnnotations, Point
+from labelgui.core.timeline import Timeline
 from test_core import make_session
 
 
@@ -141,6 +142,40 @@ class GuiTests(unittest.TestCase):
                 window.close()
                 self.app.processEvents()
                 self.assertFalse(second.isVisible())
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_four_cameras_tile_into_equal_quarters(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.cameras *= 2
+            session.config['allowed_cams'] = list(range(4))
+            session.timeline = Timeline(session.timeline.camera_times * 2)
+            session.annotations = AnnotationStore(4)
+            session.references = AnnotationStore(4)
+            window = MainWindow(session=session, sync=False)
+            try:
+                window.showNormal()
+                window.resize(1600, 1000)
+                self.app.processEvents()
+                for _ in range(2):
+                    window.arrange_cameras('tile_view')
+                    self.app.processEvents()
+                    first, second, third, fourth = [dock.geometry()
+                                                    for dock in window.subwindows.values()]
+                    self.assertEqual(first.y(), second.y())
+                    self.assertEqual(third.y(), fourth.y())
+                    self.assertEqual(first.x(), third.x())
+                    self.assertEqual(second.x(), fourth.x())
+                    self.assertLess(first.right(), second.left())
+                    self.assertLess(first.bottom(), third.top())
+                    for rect in (second, third, fourth):
+                        self.assertAlmostEqual(first.width(), rect.width(), delta=1)
+                        self.assertAlmostEqual(first.height(), rect.height(), delta=1)
+                    window.arrange_cameras('tab_view')
+                    self.app.processEvents()
+            finally:
+                window.close()
                 window.deleteLater()
                 self.app.processEvents()
 
