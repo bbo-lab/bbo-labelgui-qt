@@ -14,6 +14,9 @@ class SketchDock(QDockWidget):
 
     def __init__(self):
         super().__init__('Sketch')
+        title_bar = QWidget(self)
+        title_bar.setFixedHeight(0)
+        self.setTitleBarWidget(title_bar)
         self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
                          | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
         self.sketch_zoom_scale = 0.1
@@ -30,6 +33,8 @@ class SketchDock(QDockWidget):
         self.combobox_sketches = QComboBox()
         layout.addWidget(self.combobox_sketches)
         self.list_labels = QListWidget()
+        self.list_labels.setMinimumHeight(
+            self.list_labels.minimumSizeHint().height() - self.list_labels.fontMetrics().height())
         self.list_labels.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         layout.addWidget(self.list_labels)
         layout.setStretchFactor(self.list_labels, 5)

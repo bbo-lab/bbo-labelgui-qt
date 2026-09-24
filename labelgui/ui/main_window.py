@@ -67,6 +67,12 @@ class MainWindow(QMainWindow):
         self.save_timer.timeout.connect(self._check_saves)
         self.save_timer.start(500)
         self.showMaximized()
+        # Give controls their compact content height before the sketch expands.
+        controls = self.dock_controls
+        chrome_height = controls.height() - controls.widget().height()
+        self.resizeDocks([controls],
+                         [controls.widget().widget().minimumSizeHint().height() + chrome_height],
+                         Qt.Orientation.Vertical)
         self.setFocus()
 
     def _build_menus(self):

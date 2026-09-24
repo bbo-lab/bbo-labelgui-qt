@@ -1,111 +1,115 @@
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QDoubleValidator, QIntValidator
-from PySide6.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
-                               QPushButton, QDockWidget, QGroupBox, QSizePolicy)
+from PySide6.QtWidgets import (QWidget, QGridLayout, QVBoxLayout, QLabel, QLineEdit,
+                               QPushButton, QDockWidget, QGroupBox, QSizePolicy,
+                               QScrollArea, QFrame)
 
 
 class ControlsDock(QDockWidget):
-
     def __init__(self):
-        # Setup widget
-        super().__init__("Controls")
-        self.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
+        super().__init__('Controls')
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
+                         | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
+        self.widgets = {'labels': {}, 'buttons': {}, 'fields': {}, 'lists': {}}
 
-        main_widget = QWidget()
-        self.widgets = {
-            'labels': {},
-            'buttons': {},
-            'fields': {},
-            'lists': {}
-        }
-        self.layout_grid = QGridLayout(main_widget)
+        content = QWidget()
+        content.setObjectName('controlsContent')
+        # Palette colors keep the sections compatible with light and dark themes.
+        content.setStyleSheet('''
+            QWidget#controlsContent QGroupBox {
+                border: 1px solid palette(midlight);
+                border-radius: 6px;
+                margin-top: 10px;
+                padding: 2px;
+            }
+            QWidget#controlsContent QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 10px;
+                padding: 0 4px;
+                color: palette(text);
+                font-weight: 600;
+            }
+        ''')
+        sections = QVBoxLayout(content)
+        sections.setContentsMargins(6, 6, 6, 6)
+        sections.setSpacing(6)
 
-        row = 0
-        self.add_label("dTime:", row, 0, "d_time")
-        self.add_field(row, 1, "d_time", validator=QDoubleValidator())
+        navigation = self._group(sections, 'Navigation')
+        time_validator = QDoubleValidator(self)
+        time_validator.setDecimals(6)
+        self._field(navigation, 0, 'Current time (s)', 'current_time', time_validator)
+        step = self._field(navigation, 1, 'Time step', 'd_time', QDoubleValidator(self))
+        step.setToolTip('Positive: step in seconds. Zero: next global timepoint. '
+                        'Negative: camera-based step (-1 for camera 0, -2 for camera 1, …).')
+        self._button(navigation, 2, 0, 'Previous (A)', 'previous_time')
+        self._button(navigation, 2, 1, 'Next (D)', 'next_time')
+        previous = self._button(navigation, 3, 0, 'Labeled ← (Shift+A)', 'previous_labeled_time')
+        previous.setToolTip('Go to the previous labeled timepoint (Shift+A)')
+        following = self._button(navigation, 3, 1, 'Labeled → (Shift+D)', 'next_labeled_time')
+        following.setToolTip('Go to the next labeled timepoint (Shift+D)')
 
-        row += 1
-        self.add_label("current time:", row, 0, "current_time")
-        current_time_validator = QDoubleValidator()
-        current_time_validator.setDecimals(6)
-        self.add_field(row, 1, "current_time", validator=current_time_validator)
+        labeling = self._group(sections, 'Labeling')
+        single = self._button(labeling, 0, 0, 'Single label mode', 'single_label_mode')
+        single.setCheckable(True)
+        single.setToolTip('Advance after placing or deleting a label')
+        self._button(labeling, 0, 1, 'Save labels (S)', 'save_labels')
 
-        row += 1
-        self.add_button("Previous Timepoint (A)", row, 0, "previous_time")
-        self.add_button("Next Timepoint (D)", row, 1, "next_time")
-
-        row += 1
-        self.add_button("Previous Labeled Timepoint (Shift+A)", row, 0, "previous_labeled_time")
-        self.add_button("Next Labeled Timepoint (Shift+D)", row, 1, "next_labeled_time")
-
-        row += 1
-        self.add_button("Save Labels (S)", row, 0, "save_labels")
-        self.add_button("Single Label Mode", row, 1, "single_label_mode")
-        self.widgets['buttons']['single_label_mode'].setCheckable(True)
-
-        row += 1
-        self.add_button("Rotate (R)", row, 0, "rotate")
-        self.add_button("Zoom Out (O)", row, 1, "zoom_out")
-
-        row += 1
-        tracking_group = QGroupBox('Assisted labeling')
-        tracking_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        tracking_layout = QGridLayout(tracking_group)
-        radius_label = QLabel('Search radius (px):')
-        radius = QLineEdit()
-        radius.setEnabled(False)
+        tracking = self._group(sections, 'Assisted labeling', columns=3)
+        radius = self._field(tracking, 0, 'Radius (px)', 'search_radius',
+                             QIntValidator(1, 2147483647, self))
         radius.setMaximumWidth(90)
-        radius.setValidator(QIntValidator(1, 2147483647, radius))
-        radius_label.setBuddy(radius)
-        radius.setToolTip(
-            'Circular search radius for Alt+left-click and To next')
-        next_button = QPushButton('To next')
-        next_button.setEnabled(False)
-        next_button.setToolTip(
-            'Find the marker near its current position in the next frame of this camera')
-        camera_label = QLabel('Camera: —')
-        tracking_layout.addWidget(radius_label, 0, 0)
-        tracking_layout.addWidget(radius, 0, 1)
-        tracking_layout.addWidget(next_button, 0, 2)
-        tracking_layout.addWidget(camera_label, 1, 0, 1, 3)
-        tracking_layout.setColumnStretch(0, 1)
-        self.layout_grid.addWidget(tracking_group, row, 0, 1, 2)
-        self.widgets['labels']['search_radius'] = radius_label
-        self.widgets['fields']['search_radius'] = radius
-        self.widgets['buttons']['track_next'] = next_button
-        self.widgets['labels']['tracking_camera'] = camera_label
+        radius.setToolTip('Circular search radius for Alt+left-click and To next')
+        next_button = self._button(tracking, 0, 2, 'To next', 'track_next')
+        next_button.setToolTip('Find the marker near its current position in the next frame of this camera')
+        camera = QLabel('Camera: —')
+        camera.setWordWrap(True)
+        tracking.addWidget(camera, 1, 0, 1, 3)
+        self.widgets['labels']['tracking_camera'] = camera
+        tracking.setColumnStretch(0, 1)
+        tracking.setColumnStretch(1, 0)
+        tracking.setColumnStretch(2, 0)
 
-        self.setWidget(main_widget)
+        view = self._group(sections, 'Image view')
+        self._button(view, 0, 0, 'Rotate (R)', 'rotate')
+        self._button(view, 0, 1, 'Reset zoom (O)', 'zoom_out')
+        sections.addStretch()
 
-    def add_label(self, label_text: str, row_idx: int, col_idx: int, label_key=None):
-        label_widget = QLabel(label_text, self)
-        self.layout_grid.setColumnStretch(col_idx, 1)
-        self.layout_grid.setRowStretch(row_idx, 1)
-        self.layout_grid.addWidget(label_widget, row_idx, col_idx)
-        if label_key is None:
-            label_key = label_text
-        self.widgets['labels'][label_key] = label_widget
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+        self.setWidget(scroll)
 
-    def add_field(self, row_idx: int, col_idx: int, field_key: str, validator=None):
-        field_widget = QLineEdit(self)
-        field_widget.setEnabled(False)
+    @staticmethod
+    def _group(sections, title, columns=2):
+        group = QGroupBox(title)
+        group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        layout = QGridLayout(group)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setHorizontalSpacing(6)
+        layout.setVerticalSpacing(4)
+        for column in range(columns):
+            layout.setColumnStretch(column, 1)
+        sections.addWidget(group)
+        return layout
 
-        if validator is not None:
-            field_widget.setValidator(validator)
+    def _field(self, layout, row, title, key, validator):
+        label = QLabel(title)
+        field = QLineEdit()
+        field.setEnabled(False)
+        field.setAlignment(Qt.AlignmentFlag.AlignRight)
+        field.setValidator(validator)
+        label.setBuddy(field)
+        layout.addWidget(label, row, 0)
+        layout.addWidget(field, row, 1)
+        self.widgets['labels'][key] = label
+        self.widgets['fields'][key] = field
+        return field
 
-        self.layout_grid.setColumnStretch(col_idx, 1)
-        self.layout_grid.setRowStretch(row_idx, 1)
-        self.layout_grid.addWidget(field_widget, row_idx, col_idx, 1, 1)
-        self.widgets['fields'][field_key] = field_widget
-
-    def add_button(self, button_text: str, row_idx: int, col_idx: int, button_key=None):
-        button_widget = QPushButton(button_text, self)
-        button_widget.setEnabled(False)
-        self.layout_grid.setColumnStretch(col_idx, 1)
-        self.layout_grid.setRowStretch(row_idx, 1)
-        self.layout_grid.addWidget(button_widget, row_idx, col_idx, 1, 1)
-        if button_key is None:
-            button_key = button_text
-        self.widgets['buttons'][button_key] = button_widget
+    def _button(self, layout, row, column, title, key):
+        button = QPushButton(title)
+        button.setEnabled(False)
+        layout.addWidget(button, row, column)
+        self.widgets['buttons'][key] = button
+        return button
