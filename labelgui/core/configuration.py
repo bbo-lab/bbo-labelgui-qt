@@ -12,6 +12,10 @@ BUTTONS = ('save_labels', 'single_label_mode', 'zoom_out', 'rotate',
            'previous_label', 'next_label', 'next_time', 'previous_time',
            'previous_labeled_time', 'next_labeled_time')
 FIELDS = ('current_time', 'd_time')
+# Built-in pyqtgraph symbols; keep validation usable without importing Qt.
+REFERENCE_MARKERS = frozenset(('o', 's', 't', 't1', 't2', 't3', 'd', '+', 'x', 'p', 'h',
+                               'star', '|', '_', 'arrow_up', 'arrow_right', 'arrow_down',
+                               'arrow_left', 'crosshair'))
 
 
 def job_config_path(drive, user, job=None):
@@ -108,6 +112,19 @@ def load_configuration(path):
             cfg[key] = [_path(item, key, path.parent) for item in value]
             continue
         cfg[key] = _path(value, key, path.parent)
+
+    references = cfg['reference_labels_file']
+    markers = cfg.setdefault('reference_labels_marker',
+                             ['x'] * len(references) if isinstance(references, list) else 'x')
+    if isinstance(references, list):
+        if not isinstance(markers, list) or len(markers) != len(references):
+            raise ValueError('reference_labels_marker must be a list with the same length as reference_labels_file')
+    elif isinstance(markers, list):
+        raise ValueError('reference_labels_marker must be a single marker string for a scalar reference_labels_file')
+    for marker in markers if isinstance(markers, list) else [markers]:
+        if not isinstance(marker, str) or marker not in REFERENCE_MARKERS:
+            raise ValueError(f'Invalid reference_labels_marker {marker!r}; '
+                             f'choose from {", ".join(sorted(REFERENCE_MARKERS))}')
 
     cfg['video_times'] = _mapping(cfg['video_times'], 'video_times')
     for camera, settings in cfg['video_times'].items():

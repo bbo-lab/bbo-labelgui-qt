@@ -98,6 +98,39 @@ class GuiTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
+    def test_reference_symbols_share_one_plot_and_survive_filtering_and_frame_changes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.references = [AnnotationStore(2), AnnotationStore(2)]
+            session.reference_markers = ['s', 'd']
+            session.annotations.set_point('nose', 0, 0, (1, 2), 'alice')
+            session.references[0].set_point('nose', 0, 0, (2, 3), 'ref')
+            session.references[1].set_point('nose', 0, 0, (3, 4), 'ref')
+            session.references[1].set_point('tail', 0, 0, (4, 5), 'ref')
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+            item = camera.marker_items['ref_label']
+            try:
+                self.assertEqual([p.symbol() for p in item.points()], ['s', 'd'])
+                self.assertEqual([p.data() for p in item.points()], ['nose', 'nose'])
+                self.assertEqual(camera.marker_items['label'].points()[0].symbol(), 'o')
+                self.assertEqual(len(camera.error_lines.getData()[0]), 4)
+                window.checkbox_disp_ref_annotated.setChecked(False)
+                self.assertEqual([p.symbol() for p in item.points()], ['s', 'd', 'd'])
+                window.viewer_click(4, 5, 0, 0, 'select_ref_label')
+                self.assertEqual(session.current_label, 'tail')
+                self.assertEqual([p.symbol() for p in item.points()], ['s', 'd', 'd'])
+                window.set_time(.5, mqtt_publish=False)
+                self.assertFalse(item.isVisible())
+                window.set_time(0, mqtt_publish=False)
+                self.assertIs(camera.marker_items['ref_label'], item)
+                self.assertEqual([p.symbol() for p in item.points()], ['s', 'd', 'd'])
+                self.app.processEvents()
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_video_filters_refresh_existing_views_and_dialog(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)

@@ -89,6 +89,18 @@ project dependencies; its native Cairo library must also be available.
 
 ## Camera windows
 
+Reference marker shapes can be configured per file:
+
+```yaml
+reference_labels_file: [references/first.yml, references/second.yml]
+reference_labels_marker: ["x", "o"]
+```
+
+For a scalar `reference_labels_file` (`true`, `false`, `null`, or a filename), use
+a single marker string, such as `reference_labels_marker: "s"`. For a file list,
+provide a marker list of the same length. Omit the option to use `"x"` for every
+file. Supported pyqtgraph symbols are listed in the example configuration.
+
 Drag a camera's title bar out of the window, double-click it, or use its undock
 button to float the camera view. Floating views request a normal window frame
 for resizing, minimizing, and maximizing, and can be moved to another screen.

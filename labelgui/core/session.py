@@ -107,7 +107,7 @@ class LabelingSession:
     Widgets receive frame/overlay data and never mutate annotation dictionaries.
     """
     def __init__(self, *, user, config, cameras, sketches, timeline, labels_folder,
-                 annotations=None, references=None, saver=None, reader_factory=open_reader):
+                 annotations=None, references=None, reference_markers=None, saver=None, reader_factory=open_reader):
         self.user = user
         self.config = config
         self.cameras = cameras
@@ -117,6 +117,9 @@ class LabelingSession:
         self.labels_folder = Path(labels_folder)
         self.annotations = annotations if annotations is not None else AnnotationStore(len(cameras))
         self.references = references if references is not None else []
+        self.reference_markers = reference_markers
+        if reference_markers is not None and len(reference_markers) != len(self.references):
+            raise ValueError('Each reference store must have a corresponding marker')
         self.saver = saver if saver is not None else SaveService()
         self.current_sketch_index = 0
         self.current_label = next(iter(self.sketch.locations))
@@ -167,12 +170,16 @@ class LabelingSession:
             if ref_source is True:
                 ref_source = drive / 'data' / 'references' / f'{dataset}.yml'
             ref_sources = ref_source if isinstance(ref_source, list) else [ref_source]
+            markers = cfg['reference_labels_marker']
+            markers = markers if isinstance(markers, list) else [markers]
             references = []
-            for source in ref_sources:
+            reference_markers = []
+            for source, marker in zip(ref_sources, markers):
                 if source is None or source is False:
                     continue
                 if Path(source).is_file():
                     references.append(AnnotationStore(len(cameras), repository.load(source)))
+                    reference_markers.append(marker)
                 else:
                     logger.warning('Reference labels do not exist: %s', source)
             annotations = AnnotationStore(len(cameras), labels)
@@ -181,7 +188,8 @@ class LabelingSession:
                 timeline.seek(resume_time)
             return cls(user=user, config=cfg, cameras=cameras, sketches=sketches,
                        timeline=timeline, labels_folder=folder, annotations=annotations,
-                       references=references, saver=SaveService(repository), reader_factory=reader_factory)
+                       references=references, reference_markers=reference_markers,
+                       saver=SaveService(repository), reader_factory=reader_factory)
         except Exception:
             cls._close_cameras(cameras)
             raise
@@ -203,7 +211,8 @@ class LabelingSession:
 
     def frame_annotations(self, camera):
         return self.annotations.frame_annotations(self.frame_index(camera), camera, self.references,
-                                                  self.only_annotated_references)
+                                                  self.only_annotated_references,
+                                                  reference_markers=self.reference_markers)
 
     def select_label(self, name):
         if name not in self.sketch.locations:

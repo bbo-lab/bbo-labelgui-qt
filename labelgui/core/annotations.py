@@ -11,6 +11,7 @@ class Point:
     name: str
     coords: tuple[float, float]
     kind: str = "label"
+    marker: str | None = None
 
 
 @dataclass(frozen=True)
@@ -123,11 +124,12 @@ class AnnotationStore:
                 points.append(Point(name, coords, kind))
         return tuple(points)
 
-    def frame_annotations(self, frame, camera, references, only_annotated=True):
+    def frame_annotations(self, frame, camera, references, only_annotated=True, *, reference_markers=None):
         # Preserve the reference filter: annotated in any camera at this frame.
         names = label_lib.get_labels_from_frame(self.data, frame) if only_annotated else None
-        refs = tuple(Point(p.name, p.coords, 'ref_label')
-                     for reference in references
+        refs = tuple(Point(p.name, p.coords, 'ref_label',
+                           reference_markers[index] if reference_markers is not None else 'x')
+                     for index, reference in enumerate(references)
                      for p in reference.points(frame, camera, include_guesses=False)
                      if names is None or p.name in names)
         return FrameAnnotations(self.points(frame, camera), refs,

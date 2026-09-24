@@ -81,6 +81,69 @@ class ConfigurationTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'reference_labels_file'):
                 load_configuration(self.write_config(self.minimal | {'reference_labels_file': value}))
 
+    def test_reference_marker_defaults_and_shape_validation(self):
+        for source in (False, None, True, 'ref.yml'):
+            with self.subTest(source=source):
+                cfg = self.minimal | {'reference_labels_file': source}
+                self.assertEqual(load_configuration(self.write_config(cfg))['reference_labels_marker'], 'x')
+                cfg['reference_labels_marker'] = 'star'
+                self.assertEqual(load_configuration(self.write_config(cfg))['reference_labels_marker'], 'star')
+                cfg['reference_labels_marker'] = ['x']
+                with self.assertRaisesRegex(ValueError, 'reference_labels_marker'):
+                    load_configuration(self.write_config(cfg))
+        for source in ([], ['a.yml'], ['a.yml', 'b.yml']):
+            with self.subTest(source=source):
+                cfg = self.minimal | {'reference_labels_file': source}
+                self.assertEqual(load_configuration(self.write_config(cfg))['reference_labels_marker'],
+                                 ['x'] * len(source))
+                cfg['reference_labels_marker'] = ['o'] * len(source)
+                self.assertEqual(load_configuration(self.write_config(cfg))['reference_labels_marker'],
+                                 ['o'] * len(source))
+                for markers in ('x', ['x'] * (len(source) + 1)):
+                    cfg['reference_labels_marker'] = markers
+                    with self.assertRaisesRegex(ValueError, 'reference_labels_marker'):
+                        load_configuration(self.write_config(cfg))
+        for marker in (None, False, 2, '', 'invalid', {'symbol': 'x'}, ['nested']):
+            with self.subTest(marker=marker), self.assertRaisesRegex(ValueError, 'reference_labels_marker'):
+                load_configuration(self.write_config(self.minimal | {
+                    'reference_labels_file': ['a.yml'], 'reference_labels_marker': [marker]}))
+
+    def test_reference_markers_remain_paired_with_files_when_missing_files_are_skipped(self):
+        sketch = Path(__file__).resolve().parents[1] / 'example/sketch.yml'
+        repository = LabelRepository()
+        for name, coords in [('first.yml', (1, 2)), ('second.yml', (3, 4))]:
+            store = AnnotationStore(2)
+            store.set_point('eye', 0, 0, coords, 'ref')
+            repository.save(self.root / name, store.data)
+        cfg = self.minimal | {'sketch_files': [str(sketch)], 'exit_save_labels': False, 'dataset_name': 'test',
+                              'reference_labels_file': ['first.yml', 'missing.yml', 'second.yml'],
+                              'reference_labels_marker': ['s', '+', 'd']}
+        with self.assertLogs('labelgui.core.session', level='WARNING'):
+            session = LabelingSession.open(self.root, 'alice', self.write_config(cfg),
+                                           reader_factory=lambda _: FakeReader())
+        try:
+            session.only_annotated_references = False
+            self.assertEqual([(p.coords, p.marker) for p in session.frame_annotations(0).references],
+                             [((1, 2), 's'), ((3, 4), 'd')])
+            self.assertEqual(session.frame_annotations(1).references, ())
+            session.only_annotated_references = True
+            self.assertEqual(session.frame_annotations(0).references, ())
+            session.annotations.set_point('eye', 0, 0, (5, 6), 'alice')
+            self.assertEqual([p.marker for p in session.frame_annotations(0).references], ['s', 'd'])
+            processed = session.labels_folder / 'backup/labelgui_cfg_processed.yml'
+            self.assertEqual(load_configuration(processed), session.config)
+        finally:
+            session.close()
+
+        cfg.update(reference_labels_file='first.yml', reference_labels_marker='p')
+        session = LabelingSession.open(self.root, 'alice', self.write_config(cfg),
+                                       reader_factory=lambda _: FakeReader())
+        try:
+            session.only_annotated_references = False
+            self.assertEqual([p.marker for p in session.frame_annotations(0).references], ['p'])
+        finally:
+            session.close()
+
     def test_session_loads_all_reference_files_and_legacy_options(self):
         sketch = Path(__file__).resolve().parents[1] / 'example/sketch.yml'
         repository = LabelRepository()
@@ -103,6 +166,7 @@ class ConfigurationTests(unittest.TestCase):
                 try:
                     session.only_annotated_references = False
                     self.assertEqual([p.coords for p in session.frame_annotations(0).references], expected)
+                    self.assertEqual([p.marker for p in session.frame_annotations(0).references], ['x'] * len(expected))
                     self.assertEqual(session.frame_annotations(1).references, ())
                     processed = session.labels_folder / 'backup/labelgui_cfg_processed.yml'
                     self.assertEqual(load_configuration(processed), session.config)

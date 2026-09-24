@@ -45,11 +45,18 @@ video_times:
 load_labels_file: null
 # false/null: no references. true: <base>/data/references/<dataset_name>.yml.
 # A filename or list of filenames loads references from those paths.
-# All files use the same marker style; matching landmark names are shown together.
+# Matching landmark names from different files are shown together.
 reference_labels_file: false
+# One pyqtgraph marker string for a scalar reference_labels_file (true/false/null/path),
+# or a list of marker strings matching the reference file list in order and length.
+# If omitted, every reference file uses "x".
+# Symbols: o, s, t, t1, t2, t3, d, +, x, p, h, star, |, _,
+#          arrow_up, arrow_right, arrow_down, arrow_left, crosshair.
+reference_labels_marker: "x"
 # reference_labels_file:
 #   - references/labels_1.yml
 #   - references/labels_2.yml
+# reference_labels_marker: ["x", "o"]
 
 sketch_zoom_scale: 0.1  # Zoom radius as a fraction of the larger image dimension.
 exit_save_labels: true

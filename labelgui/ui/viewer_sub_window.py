@@ -245,6 +245,7 @@ class ViewerSubWindow(QDockWidget):
         item = self.marker_items[kind]
         item.setData(
             pos=[point.coords for point in labels], data=[point.name for point in labels],
+            symbol=[point.marker or self.marker_params[kind]['symbol'] for point in labels],
             brush=[self.current_label_brush if active else self.marker_brushes[kind]
                    for active in selected],
             size=[8 if active else self.marker_params[kind]['size'] for active in selected],
