@@ -98,6 +98,24 @@ Frame navigation, annotation, and keyboard shortcuts remain synchronized.
 The View menu offers Tab and Tile arrangements for docked cameras, and
 **Dock All Cameras** brings every floating camera back into the main window.
 
+### Assisted marker placement
+
+Set **Search radius (px)** in the Controls dock (positive integer, default 10).
+**Alt + left-click** places the active marker on the brightest pixel within that
+circular radius around the click. **To next** starts from the active marker's
+recorded position, finds the brightest nearby pixel in the current camera's next
+frame, labels it, and displays that frame. It advances one camera frame, regardless
+of `dTime` or Single Label Mode. Alt-click otherwise follows normal placement's
+Single Label Mode behavior.
+
+The camera shown beside **To next** follows the selected camera tab or the last
+camera clicked or focused. The button is disabled for an unassigned marker
+(guesses do not count), an invalid radius, or the last available camera frame.
+Searches use the filtered video before display contrast clipping, clip the circle
+at image edges, and use mean RGB intensity for color images (ignoring alpha).
+Equal maxima prefer the position closest to the search center. If no finite pixel
+is found, the position and frame remain unchanged.
+
 Use **View → Trajectories → Active marker** or **All markers** to overlay paths
 from all annotated frames on each camera's current image. **Hidden** (the default)
 turns them off. Paths connect recorded positions in frame order, including across

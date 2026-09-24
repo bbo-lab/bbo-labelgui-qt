@@ -1,6 +1,6 @@
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (QWidget, QGridLayout, QLabel, QLineEdit,
-                               QPushButton, QDockWidget)
+                               QPushButton, QDockWidget, QGroupBox, QSizePolicy)
 
 
 class ControlsDock(QDockWidget):
@@ -48,6 +48,34 @@ class ControlsDock(QDockWidget):
         row += 1
         self.add_button("Rotate (R)", row, 0, "rotate")
         self.add_button("Zoom Out (O)", row, 1, "zoom_out")
+
+        row += 1
+        tracking_group = QGroupBox('Assisted labeling')
+        tracking_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        tracking_layout = QGridLayout(tracking_group)
+        radius_label = QLabel('Search radius (px):')
+        radius = QLineEdit()
+        radius.setEnabled(False)
+        radius.setMaximumWidth(90)
+        radius.setValidator(QIntValidator(1, 2147483647, radius))
+        radius_label.setBuddy(radius)
+        radius.setToolTip(
+            'Circular search radius for Alt+left-click and To next')
+        next_button = QPushButton('To next')
+        next_button.setEnabled(False)
+        next_button.setToolTip(
+            'Find the marker near its current position in the next frame of this camera')
+        camera_label = QLabel('Camera: —')
+        tracking_layout.addWidget(radius_label, 0, 0)
+        tracking_layout.addWidget(radius, 0, 1)
+        tracking_layout.addWidget(next_button, 0, 2)
+        tracking_layout.addWidget(camera_label, 1, 0, 1, 3)
+        tracking_layout.setColumnStretch(0, 1)
+        self.layout_grid.addWidget(tracking_group, row, 0, 1, 2)
+        self.widgets['labels']['search_radius'] = radius_label
+        self.widgets['fields']['search_radius'] = radius
+        self.widgets['buttons']['track_next'] = next_button
+        self.widgets['labels']['tracking_camera'] = camera_label
 
         self.setWidget(main_widget)
 

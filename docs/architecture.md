@@ -29,6 +29,13 @@ MainWindow ---------> TimeSynchronizer (MQTT transport)
   timestamp snapping, bounds, and all three `d_time` modes.
 - `annotations.py` owns edits, deletion metadata, suggestions, nearest-point
   selection, and reference filtering. Frame overlays are plain data objects.
+- `local_search.py` selects a pixel inside a circular neighborhood. Both Alt-click
+  and next-frame tracking call `LabelingSession.refine_position()`. To replace
+  brightness, assign `session.pixel_metric` a callable accepting an image crop
+  and returning a 2D score array of the same height and width (higher is better).
+  The shared search handles boundaries, nonfinite scores, and nearest-center ties.
+  For example, `session.pixel_metric = lambda crop: -brightness(crop)` selects
+  the darkest pixel instead. `session.search_radius` supplies the pixel radius.
 - `sketch.py` loads sketch files and selects landmarks by sketch coordinates.
 - `persistence.py` wraps the existing BBO label format and handles background
   saves, failures, and resume state.

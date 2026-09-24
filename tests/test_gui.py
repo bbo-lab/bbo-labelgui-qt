@@ -11,7 +11,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDockWidget
+from PySide6.QtWidgets import QApplication, QDockWidget, QTabBar
 
 from labelgui.ui.main_window import MainWindow
 from labelgui.ui.video_filters_dialog import VideoFiltersDialog
@@ -20,12 +20,83 @@ from labelgui.core.jobs import JobRepository
 from labelgui.core.annotations import AnnotationStore, FrameAnnotations, Point
 from labelgui.core.timeline import Timeline
 from test_core import FilteredReader, make_session
+from test_local_search import PeakReader
 
 
 class GuiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_alt_click_and_to_next_share_radius_and_camera_selection(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            for camera in session.cameras:
+                camera.reader = PeakReader()
+            window = MainWindow(session=session, sync=False)
+            first, second = window.subwindows.values()
+            radius = window.dock_controls.widgets['fields']['search_radius']
+            button = window.dock_controls.widgets['buttons']['track_next']
+            try:
+                first.setFloating(True)
+                first.resize(640, 480)
+                first.show()
+                self.app.processEvents()
+                self.assertFalse(button.isEnabled())
+                radius.setText('2')
+                self.assertEqual(session.search_radius, 2)
+                first.box_vmax.setValue(30)  # Display clipping must not affect the search.
+                scene_pos = first.view_box.mapViewToScene(QPointF(3, 5))
+                point = first.plot_wget.mapFromScene(scene_pos)
+                QTest.mouseClick(first.plot_wget.viewport(), Qt.MouseButton.LeftButton,
+                                 Qt.KeyboardModifier.AltModifier, pos=point)
+                self.assertEqual(session.annotations.point('nose', 0, 0), (4, 5))
+                self.assertTrue(button.isEnabled())
+                with patch.object(window.synchronizer, 'publish') as publish:
+                    button.click()
+                    publish.assert_called_once_with(.5)
+                self.assertEqual(session.annotations.point('nose', 1, 0), (5, 5))
+                self.assertEqual(session.current_time, .5)
+                first.setFloating(False)
+                window.arrange_cameras('tab_view')
+                self.app.processEvents()
+                tabs = next(bar for bar in window.camera_workspace.findChildren(QTabBar) if bar.count() == 2)
+                index = next(i for i in range(tabs.count()) if tabs.tabText(i) == second.windowTitle())
+                QTest.mouseClick(tabs, Qt.MouseButton.LeftButton, pos=tabs.tabRect(index).center())
+                self.app.processEvents()
+                self.assertEqual(window.active_camera, 1)
+                self.assertFalse(button.isEnabled())
+                window.viewer_click(5, 5, 1, 1)
+                self.assertTrue(button.isEnabled())
+                button.click()
+                self.assertEqual(session.current_time, 1.1)
+                self.assertEqual(session.annotations.point('nose', 2, 1), (6, 5))
+                window.set_current_label('tail')
+                self.assertFalse(button.isEnabled())
+                window.set_current_label('nose')
+                for text in ('', '-1', '0', 'abc', '1.5'):
+                    radius.setText(text)
+                    self.assertFalse(radius.hasAcceptableInput())
+                    self.assertFalse(button.isEnabled())
+                revision = session.annotations.revision
+                window.viewer_click(5, 5, 2, 1, 'auto_label')
+                self.assertEqual(session.annotations.revision, revision)
+                radius.setText('3')
+                self.assertTrue(button.isEnabled())
+                window.viewer_click(6, 5, 2, 1, 'delete_label')
+                self.assertFalse(button.isEnabled())
+                # Focusing a floated camera changes the target without placing a label.
+                first.setFloating(True)
+                first.show()
+                first.activateWindow()
+                first.plot_wget.setFocus()
+                self.app.processEvents()
+                self.assertEqual(window.active_camera, 0)
+                self.assertIn('cam0.avi', window.dock_controls.widgets['labels']['tracking_camera'].text())
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
 
     def test_video_filters_refresh_existing_views_and_dialog(self):
         with tempfile.TemporaryDirectory() as folder:

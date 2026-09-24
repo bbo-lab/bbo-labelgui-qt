@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QActionGroup
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
 
 from labelgui.core.configuration import job_config_path
 from labelgui.core.session import LabelingSession
@@ -35,6 +35,7 @@ class MainWindow(QMainWindow):
             session = LabelingSession.open(drive, user, config_path)
         self.session = session
         self.subwindows = {}
+        self.active_camera = None
         self.camera_workspace = QMainWindow(self)
         self.camera_workspace.setWindowFlags(Qt.WindowType.Widget)
         self.camera_workspace.setDockOptions(QMainWindow.DockOption.AllowNestedDocks
@@ -50,6 +51,10 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_viewers()
         self._connect_controls()
+        self.camera_workspace.tabifiedDockWidgetActivated.connect(
+            lambda dock: self._set_active_camera(dock.index))
+        QApplication.instance().focusChanged.connect(self._camera_focus_changed)
+        self._set_active_camera(next(iter(self.subwindows), None))
         self.setCentralWidget(self.camera_workspace)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_sketch)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_controls)
@@ -94,7 +99,8 @@ class MainWindow(QMainWindow):
                 window.setWindowTitle(f'{camera.path.name} ({index})')
                 window.connect_controls()
                 window.mouse_clicked_signal.connect(self.viewer_click)
-                window.view_box.mouse_wheel_signal.connect(self.viewer_wheel_event)
+                window.view_box.mouse_wheel_signal.connect(
+                    lambda delta, camera=index: self.viewer_wheel_event(delta, camera))
                 window.key_pressed_signal.connect(self._handle_shortcut)
                 self.subwindows[index] = window
                 self.camera_workspace.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, window)
@@ -129,6 +135,50 @@ class MainWindow(QMainWindow):
             field.setEnabled(cfg['fields'].get(name, True))
             field.editingFinished.connect(callback)
         self.dock_controls.widgets['fields']['d_time'].setText(str(self.session.d_time))
+        radius = self.dock_controls.widgets['fields']['search_radius']
+        radius.setEnabled(True)
+        radius.setText(str(self.session.search_radius))
+        radius.textChanged.connect(self._search_radius_changed)
+        self.dock_controls.widgets['buttons']['track_next'].clicked.connect(self.track_next)
+
+    def _camera_focus_changed(self, previous, current):
+        for camera, window in self.subwindows.items():
+            if current is window or (current is not None and window.isAncestorOf(current)):
+                self._set_active_camera(camera)
+                break
+
+    def _set_active_camera(self, camera):
+        if camera not in self.subwindows:
+            return
+        self.active_camera = camera
+        self.dock_controls.widgets['labels']['tracking_camera'].setText(
+            f'Camera: {self.session.cameras[camera].path.name} ({camera})')
+        self._update_tracking_controls()
+
+    def _search_radius_changed(self):
+        field = self.dock_controls.widgets['fields']['search_radius']
+        if field.hasAcceptableInput():
+            self.session.search_radius = field.validator().locale().toInt(field.text())[0]
+        self._update_tracking_controls()
+
+    def _update_tracking_controls(self):
+        valid_radius = self.dock_controls.widgets['fields']['search_radius'].hasAcceptableInput()
+        self.dock_controls.widgets['buttons']['track_next'].setEnabled(
+            valid_radius and self.active_camera is not None
+            and self.session.can_track_next(self.active_camera))
+
+    def track_next(self):
+        self._update_tracking_controls()
+        if not self.dock_controls.widgets['buttons']['track_next'].isEnabled():
+            return
+        try:
+            changed = self.session.track_next(self.active_camera)
+        except Exception as error:
+            QMessageBox.critical(self, 'Could not track marker', str(error))
+            return
+        if changed:
+            self._render_frame()
+            self.synchronizer.publish(self.session.current_time)
 
     def _render_sketch(self):
         self.dock_sketch.display_sketch(self.session.sketch, self.session.current_sketch_index,
@@ -139,6 +189,7 @@ class MainWindow(QMainWindow):
         for window in self.subwindows.values():
             window.set_current_label(self.session.current_label)
         self._render_trajectories()
+        self._update_tracking_controls()
 
     def _trajectory_mode_changed(self, action):
         self.trajectory_mode = action.data()
@@ -177,8 +228,16 @@ class MainWindow(QMainWindow):
         self.session.single_label_mode = checked
 
     def viewer_click(self, x, y, cam_frame_idx, cam_idx, action='create_label'):
+        self._set_active_camera(cam_idx)
+        if action == 'auto_label' and not self.dock_controls.widgets['fields']['search_radius'].hasAcceptableInput():
+            return
         previous_time = self.session.current_time
-        if self.session.handle_video_action(cam_idx, cam_frame_idx, (x, y), action):
+        try:
+            changed = self.session.handle_video_action(cam_idx, cam_frame_idx, (x, y), action)
+        except Exception as error:
+            QMessageBox.critical(self, 'Could not place marker', str(error))
+            return
+        if changed:
             changed_time = previous_time != self.session.current_time
             self._render_frame(images=changed_time)
             if changed_time:
@@ -225,7 +284,9 @@ class MainWindow(QMainWindow):
     def goto_previous_labeled_time(self):
         self.move_labeled_timepoint(-1)
 
-    def viewer_wheel_event(self, delta):
+    def viewer_wheel_event(self, delta, camera=None):
+        if camera is not None:
+            self._set_active_camera(camera)
         self.move_num_timepoints(int(round(delta / 120)))
 
     def field_current_time_changed(self):
@@ -312,6 +373,7 @@ class MainWindow(QMainWindow):
             for dock in docks[1:]:
                 workspace.tabifyDockWidget(docks[0], dock)
             docks[0].raise_()
+            self._set_active_camera(docks[0].index)
         else:
             columns = math.ceil(math.sqrt(len(docks)))
             row_heads = docks[::columns]

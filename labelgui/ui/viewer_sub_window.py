@@ -291,9 +291,7 @@ class ViewerSubWindow(QDockWidget):
                 elif modifiers == Qt.KeyboardModifier.ControlModifier:
                     action_str = 'select_ref_label'
                 elif modifiers == Qt.KeyboardModifier.AltModifier:
-                    # TODO:
                     action_str = 'auto_label'
-                    logger.log(logging.WARNING, "Not yet implemented")
                 else:
                     action_str = 'create_label'
             # Right click

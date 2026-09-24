@@ -14,6 +14,7 @@ from .configuration import archive_configuration, load_configuration
 from .persistence import LabelRepository, SaveService, load_resume_time, save_resume_time
 from .sketch import Sketch
 from .timeline import Timeline
+from .local_search import brightness, find_local_peak
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,8 @@ class LabelingSession:
         self.d_time = float(config['d_time'])
         self.single_label_mode = False
         self.only_annotated_references = True
+        self.search_radius = 10
+        self.pixel_metric = brightness
         self._autosave_counter = 0
         self._label_saves = {}
         self._closed = False
@@ -282,6 +285,47 @@ class LabelingSession:
         self._close_cameras(old_cameras)
         return True
 
+    def refine_position(self, camera, frame, coords):
+        """Shared neighborhood search for mouse placement and frame tracking."""
+        return find_local_peak(self.cameras[camera].frame(frame), coords,
+                               self.search_radius, self.pixel_metric)
+
+    def next_tracking_frame(self, camera):
+        """Next camera-local frame that can be displayed within the session."""
+        frame = self.frame_index(camera) + 1
+        times = self.timeline.camera_times[camera]
+        if frame >= len(times):
+            return None
+        time = times[frame]
+        if not self.timeline.times[0] <= time <= self.timeline.times[-1]:
+            return None
+        # Equal timestamps cannot identify a later frame in the shared timeline.
+        if self.timeline.frame_index(camera, time) != frame:
+            return None
+        return frame
+
+    def can_track_next(self, camera):
+        return (self.current_label is not None
+                and self.annotations.point(self.current_label, self.frame_index(camera), camera) is not None
+                and self.next_tracking_frame(camera) is not None)
+
+    def track_next(self, camera):
+        """Place a marker in the next camera frame, then display that timestamp.
+
+        Search before mutating state so a failed search leaves the session intact.
+        This operation advances exactly once, regardless of single-label mode.
+        """
+        if not self.can_track_next(camera):
+            return False
+        frame = self.next_tracking_frame(camera)
+        origin = self.annotations.point(self.current_label, self.frame_index(camera), camera)
+        coords = self.refine_position(camera, frame, origin)
+        if coords is None:
+            return False
+        self.annotations.set_point(self.current_label, frame, camera, coords, self.user)
+        self.seek(self.timeline.camera_times[camera][frame])
+        return True
+
     def handle_video_action(self, camera, frame, coords, action):
         # Ignore stale mouse events after a frame change.
         if frame != self.frame_index(camera):
@@ -296,7 +340,10 @@ class LabelingSession:
         elif action == 'delete_label':
             self.annotations.delete_point(self.current_label, frame, camera, self.user)
         elif action == 'auto_label':
-            return False
+            coords = self.refine_position(camera, frame, coords)
+            if coords is None:
+                return False
+            self.annotations.set_point(self.current_label, frame, camera, coords, self.user)
         else:
             raise ValueError(f"Unknown video action: {action}")
         if self.single_label_mode:
