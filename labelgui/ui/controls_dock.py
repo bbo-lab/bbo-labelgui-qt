@@ -37,6 +37,10 @@ class ControlsDock(QDockWidget):
         self.add_button("Next Timepoint (D)", row, 1, "next_time")
 
         row += 1
+        self.add_button("Previous Labeled Timepoint (Shift+A)", row, 0, "previous_labeled_time")
+        self.add_button("Next Labeled Timepoint (Shift+D)", row, 1, "next_labeled_time")
+
+        row += 1
         self.add_button("Save Labels (S)", row, 0, "save_labels")
         self.add_button("Single Label Mode", row, 1, "single_label_mode")
         self.widgets['buttons']['single_label_mode'].setCheckable(True)

@@ -76,6 +76,12 @@ class AnnotationStore:
         self.revision += 1
         return True
 
+    def labeled_frames(self, camera):
+        """Camera-local frames with at least one marked point, excluding guesses."""
+        return {frame for frames in self.data['labels'].values()
+                for frame, entry in frames.items()
+                if np.all(np.isfinite(entry['coords'][camera]))}
+
     def trajectories(self, camera, names=None):
         """Recorded positions in frame order, one nonempty array per marker.
 

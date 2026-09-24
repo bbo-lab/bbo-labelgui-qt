@@ -63,6 +63,8 @@ controls:
     next_label: true
     next_time: true
     previous_time: true
+    previous_labeled_time: true
+    next_labeled_time: true
   fields:
     current_time: true
     d_time: true

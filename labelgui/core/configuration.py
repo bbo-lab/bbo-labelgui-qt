@@ -9,7 +9,8 @@ from bbo.yaml import load as yaml_load
 
 CONFIG_EXTENSIONS = ('.yml', '.yaml')
 BUTTONS = ('save_labels', 'single_label_mode', 'zoom_out', 'rotate',
-           'previous_label', 'next_label', 'next_time', 'previous_time')
+           'previous_label', 'next_label', 'next_time', 'previous_time',
+           'previous_labeled_time', 'next_labeled_time')
 FIELDS = ('current_time', 'd_time')
 
 

@@ -179,6 +179,21 @@ class LabelingSession:
         self.timeline.step(count, self.d_time)
         self.autosave_event()
 
+    def step_labeled(self, direction):
+        """Jump to the nearest marked camera timestamp in the given direction."""
+        times = (times[frame]
+                 for camera, times in enumerate(self.timeline.camera_times)
+                 for frame in self.annotations.labeled_frames(camera)
+                 if 0 <= frame < len(times))
+        candidates = (time for time in times
+                      if self.timeline.times[0] <= time <= self.timeline.times[-1]
+                      and (time - self.current_time) * direction > 0)
+        target = (min if direction > 0 else max)(candidates, default=None)
+        if target is None:
+            return False
+        self.seek(target)
+        return True
+
     def set_time_step(self, value):
         value = float(value)
         if not math.isfinite(value):

@@ -109,10 +109,13 @@ class MainWindow(QMainWindow):
         sketch.point_selected.connect(self._sketch_point_selected)
         actions = {'save_labels': self.save_labels, 'zoom_out': self.viewer_zoom_reset,
                    'rotate': self.viewer_rotate, 'previous_time': self.goto_previous_time,
-                   'next_time': self.goto_next_time}
+                   'next_time': self.goto_next_time,
+                   'previous_labeled_time': self.goto_previous_labeled_time,
+                   'next_labeled_time': self.goto_next_labeled_time}
         for name, callback in actions.items():
             button = self.dock_controls.widgets['buttons'][name]
-            button.setEnabled(cfg['buttons'].get(name, name == 'rotate'))
+            button.setEnabled(cfg['buttons'].get(name, name in (
+                'rotate', 'previous_labeled_time', 'next_labeled_time')))
             button.clicked.connect(lambda checked=False, action=callback: action())
         single = self.dock_controls.widgets['buttons']['single_label_mode']
         single.setEnabled(cfg['buttons'].get('single_label_mode', True))
@@ -209,6 +212,17 @@ class MainWindow(QMainWindow):
     def goto_previous_time(self):
         self.move_num_timepoints(-1)
 
+    def move_labeled_timepoint(self, direction):
+        if self.session.step_labeled(direction):
+            self._render_frame()
+            self.synchronizer.publish(self.session.current_time)
+
+    def goto_next_labeled_time(self):
+        self.move_labeled_timepoint(1)
+
+    def goto_previous_labeled_time(self):
+        self.move_labeled_timepoint(-1)
+
     def viewer_wheel_event(self, delta):
         self.move_num_timepoints(int(round(delta / 120)))
 
@@ -304,9 +318,14 @@ class MainWindow(QMainWindow):
             Qt.Key.Key_N: ('next_label', self.dock_sketch.widgets['buttons']['next_label'].click),
             Qt.Key.Key_P: ('previous_label', self.dock_sketch.widgets['buttons']['previous_label'].click),
         }
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            actions[Qt.Key.Key_A] = ('previous_labeled_time', self.goto_previous_labeled_time)
+            actions[Qt.Key.Key_D] = ('next_labeled_time', self.goto_next_labeled_time)
         action = actions.get(event.key())
-        if action and cfg.get(action[0], action[0] == 'rotate'):
-            if not event.isAutoRepeat() or action[0] in ('next_time', 'previous_time'):
+        if action and cfg.get(action[0], action[0] in (
+                'rotate', 'previous_labeled_time', 'next_labeled_time')):
+            if not event.isAutoRepeat() or action[0] in (
+                    'next_time', 'previous_time', 'next_labeled_time', 'previous_labeled_time'):
                 action[1]()
             event.accept()
             return True

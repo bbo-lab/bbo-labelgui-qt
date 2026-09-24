@@ -213,6 +213,51 @@ class PersistenceTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_labeled_navigation_uses_marked_camera_timestamps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder, d_time=10)
+            try:
+                self.assertFalse(session.step_labeled(1))
+                session.annotations.set_point('tail', 1, 1, (3, 4), 'alice')
+                session.annotations.set_point('nose', 3, 0, (5, 6), 'alice')
+                session.annotations.set_point('nose', 2, 0, (7, 8), 'alice')
+                session.annotations.delete_point('nose', 2, 0, 'alice')
+                session.references.set_point('nose', 1, 0, (9, 10), 'ref')
+                self.assertFalse(session.step_labeled(-1))
+                self.assertEqual(session.current_time, 0)
+                self.assertTrue(session.step_labeled(1))
+                self.assertEqual(session.current_time, .6)
+                self.assertTrue(session.step_labeled(1))
+                self.assertEqual(session.current_time, 1.5)
+                self.assertFalse(session.step_labeled(1))
+                self.assertEqual(session.current_time, 1.5)
+                self.assertTrue(session.step_labeled(-1))
+                self.assertEqual(session.current_time, .6)
+                # Edits take effect immediately, including deletion of the last point.
+                session.annotations.delete_point('nose', 3, 0, 'alice')
+                self.assertFalse(session.step_labeled(1))
+                session.annotations.set_point('tail', 2, 1, (1, 2), 'alice')
+                self.assertTrue(session.step_labeled(1))
+                self.assertEqual(session.current_time, 1.1)
+            finally:
+                session.close()
+
+    def test_labeled_navigation_respects_time_range_and_recording_length(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.timeline = Timeline(session.timeline.camera_times, .5, 1.6)
+            try:
+                for frame in (0, 2, 4, 100):
+                    session.annotations.set_point('nose', frame, 0, (1, 2), 'alice')
+                self.assertFalse(session.step_labeled(-1))
+                self.assertEqual(session.current_time, .5)
+                self.assertTrue(session.step_labeled(1))
+                self.assertEqual(session.current_time, 1)
+                self.assertFalse(session.step_labeled(1))
+                self.assertEqual(session.current_time, 1)
+            finally:
+                session.close()
+
     def test_navigation_and_selection_do_not_save_unchanged_labels(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder, auto_save=True, auto_save_N0=1,

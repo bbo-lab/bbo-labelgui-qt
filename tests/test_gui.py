@@ -67,6 +67,49 @@ class GuiTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
+    def test_labeled_timepoint_buttons_and_shortcuts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.annotations.set_point('tail', 1, 1, (3, 4), 'alice')
+            session.annotations.set_point('nose', 3, 0, (5, 6), 'alice')
+            window = MainWindow(session=session, sync=False)
+            buttons = window.dock_controls.widgets['buttons']
+            try:
+                self.app.processEvents()
+                buttons['next_labeled_time'].click()
+                self.assertEqual(session.current_time, .6)
+                self.assertEqual(window.subwindows[1].frame_idx, 1)
+                self.assertIn('tail', window.subwindows[1].labels['label'])
+                with patch.object(window.synchronizer, 'publish') as publish:
+                    buttons['next_labeled_time'].click()
+                    self.assertEqual(session.current_time, 1.5)
+                    publish.assert_called_once_with(1.5)
+                buttons['previous_labeled_time'].click()
+                self.assertEqual(session.current_time, .6)
+                QTest.keyClick(window, Qt.Key.Key_D, Qt.KeyboardModifier.ShiftModifier)
+                self.assertEqual(session.current_time, 1.5)
+                QTest.keyClick(window, Qt.Key.Key_A, Qt.KeyboardModifier.ShiftModifier)
+                self.assertEqual(session.current_time, .6)
+                camera = window.subwindows[0]
+                camera.setFloating(True)
+                camera.show()
+                self.app.processEvents()
+                QTest.keyClick(camera.plot_wget, Qt.Key.Key_D, Qt.KeyboardModifier.ShiftModifier)
+                self.assertEqual(session.current_time, 1.5)
+                QTest.keyClick(camera.plot_wget, Qt.Key.Key_A, Qt.KeyboardModifier.ShiftModifier)
+                self.assertEqual(session.current_time, .6)
+                QTest.keyClick(camera.plot_wget, Qt.Key.Key_D)
+                self.assertEqual(session.current_time, 1.)
+                QTest.keyClick(camera.plot_wget, Qt.Key.Key_A)
+                self.assertEqual(session.current_time, .6)
+                session.config['controls']['buttons']['next_labeled_time'] = False
+                QTest.keyClick(window, Qt.Key.Key_D, Qt.KeyboardModifier.ShiftModifier)
+                self.assertEqual(session.current_time, .6)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_camera_layouts_leave_floating_views_alone_and_recall_them(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)
