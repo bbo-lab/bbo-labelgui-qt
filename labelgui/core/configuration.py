@@ -1,11 +1,13 @@
 """YAML job configuration: discovery, defaults, validation, and archiving."""
 import math
+import logging
 from pathlib import Path
 import shutil
 
 import yaml
 from bbo.yaml import load as yaml_load
 
+logger = logging.getLogger(__name__)
 
 CONFIG_EXTENSIONS = ('.yml', '.yaml')
 BUTTONS = ('save_labels', 'single_label_mode', 'zoom_out', 'rotate',
@@ -61,6 +63,7 @@ def load_configuration(path):
         raise ValueError(f"Job configurations must be YAML (.yml or .yaml): {path}")
     try:
         # Preserve BBO includes/placeholders; check assets when opening the job.
+        logger.info('Loading configuration: %s', path)
         cfg = _mapping(yaml_load(path, exist_required=False), 'Job configuration')
     except (yaml.YAMLError, AttributeError, TypeError) as error:
         raise ValueError(f"Invalid YAML job configuration: {path}") from error

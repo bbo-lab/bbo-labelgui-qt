@@ -1,10 +1,12 @@
 """Sketch assets and geometric landmark selection."""
 from dataclasses import dataclass
 from pathlib import Path
+import logging
 
 import numpy as np
 import yaml
 
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Sketch:
@@ -13,7 +15,8 @@ class Sketch:
 
     @classmethod
     def load(cls, path: Path):
-        path = Path(path)
+        path = Path(path).expanduser().resolve()
+        logger.info('Loading sketch: %s', path)
         if path.suffix.lower() in ('.yml', '.yaml'):
             from imageio.v3 import imread
 
@@ -32,6 +35,7 @@ class Sketch:
             image_path = Path(image_file).expanduser()
             if not image_path.is_absolute():
                 image_path = path.parent / image_path
+            logger.info('Loading sketch image: %s', image_path.resolve())
             if image_path.suffix.lower() == '.svg':
                 from cairosvg import svg2png
 

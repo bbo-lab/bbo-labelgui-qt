@@ -4,6 +4,15 @@ GUI for guided data labeling
 ## Running
 1. Run with `python -m labelgui [options ...]`
 
+The default INFO console output lists directly opened files: user defaults, job
+configuration, videos, timestamp CSVs, sketches and their images, editable labels,
+reference files, and saved resume state. At startup and each time/frame change it
+prints the shared time, every camera's local frame index, and a table of stored
+labels and references with coordinates, labeler, and annotation edit time (Unix
+seconds). Reference indices in the table match the startup file log. Guesses and
+deleted points are excluded; unavailable metadata is shown as `-`. Use
+`--loglevel warning` to silence these INFO messages.
+
 ## Options
 ### Labeling mode
 Run with `python -m labelgui [base data directory]`.

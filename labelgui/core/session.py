@@ -11,6 +11,7 @@ from bbo import path_management
 from labelgui import misc
 from .annotations import AnnotationStore, nearest_point
 from .configuration import archive_configuration, load_configuration
+from .diagnostics import format_frame_report
 from .persistence import LabelRepository, SaveService, load_resume_time, save_resume_time
 from .sketch import Sketch
 from .timeline import Timeline
@@ -49,6 +50,8 @@ class Camera:
 
     @classmethod
     def open(cls, path, filter_string, reader_factory):
+        logger.info('Loading video: %s%s', Path(path).resolve(),
+                    f' (filters: {filter_string})' if filter_string else '')
         source = f'{path}|{filter_string}' if filter_string else path
         camera = cls(path, reader_factory(source), {}, filter_string)
         try:
@@ -89,6 +92,7 @@ def open_reader(path):
 def camera_timestamps(reader, metadata, settings):
     if 'file' in settings:
         import pandas as pd
+        logger.info('Loading camera timestamps: %s', Path(settings['file']).expanduser().resolve())
         times = pd.read_csv(settings['file'], comment='#').iloc[:, 0].to_numpy(dtype=float)
         if len(times) != len(reader):
             raise ValueError("Timestamp count does not match recording frame count")
@@ -131,6 +135,8 @@ class LabelingSession:
         self._autosave_counter = 0
         self._label_saves = {}
         self._closed = False
+        self._last_logged_frame = None
+        self.log_frame()
 
     @classmethod
     def open(cls, drive, user, config_path, *, reader_factory=open_reader, repository=None):
@@ -163,6 +169,8 @@ class LabelingSession:
             archive_configuration(config_path, folder / 'backup', cfg)
             source = cfg['load_labels_file']
             source = Path(source) if isinstance(source, (str, Path)) else folder / 'labels.yml'
+            if source.exists():
+                logger.info('Loading editable labels: %s', source.resolve())
             labels = repository.load(source) if source.exists() else None
             if labels is not None:
                 misc.copy_file(source, folder / 'backup')
@@ -178,6 +186,7 @@ class LabelingSession:
                 if source is None or source is False:
                     continue
                 if Path(source).is_file():
+                    logger.info('Loading reference[%d]: %s', len(references), Path(source).resolve())
                     references.append(AnnotationStore(len(cameras), repository.load(source)))
                     reference_markers.append(marker)
                 else:
@@ -209,6 +218,17 @@ class LabelingSession:
     def frame_index(self, camera):
         return self.timeline.frame_index(camera)
 
+    def log_frame(self):
+        """Log a report once per time/frame change, including the initial frame."""
+        if not logger.isEnabledFor(logging.INFO):
+            return
+        frames = tuple(self.frame_index(camera) for camera in range(len(self.cameras)))
+        state = (self.current_time, frames)
+        if state == self._last_logged_frame:
+            return
+        logger.info('\n%s', format_frame_report(self.current_time, frames, self.annotations, self.references))
+        self._last_logged_frame = state
+
     def frame_annotations(self, camera):
         return self.annotations.frame_annotations(self.frame_index(camera), camera, self.references,
                                                   self.only_annotated_references,
@@ -233,10 +253,12 @@ class LabelingSession:
 
     def seek(self, time):
         self.timeline.seek(time)
+        self.log_frame()
         self.autosave_event()
 
     def step(self, count):
         self.timeline.step(count, self.d_time)
+        self.log_frame()
         self.autosave_event()
 
     def step_labeled(self, direction):
@@ -292,6 +314,7 @@ class LabelingSession:
             for filename, value in zip(filenames, filters)
         ]
         self._close_cameras(old_cameras)
+        self.log_frame()
         return True
 
     def refine_position(self, camera, frame, coords):

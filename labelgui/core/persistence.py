@@ -4,10 +4,12 @@ from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import os
+import logging
 
 import numpy as np
 from bbo import label_lib
 
+logger = logging.getLogger(__name__)
 
 class LabelRepository:
     def load(self, path):
@@ -63,7 +65,10 @@ class SaveService:
 
 def load_resume_time(folder):
     path = Path(folder) / 'exit_status.npy'
-    return np.load(path, allow_pickle=True)[()].get('i_time') if path.is_file() else None
+    if path.is_file():
+        logger.info('Loading resume state: %s', path.resolve())
+        return np.load(path, allow_pickle=True)[()].get('i_time')
+    return None
 
 
 def save_resume_time(folder, time):

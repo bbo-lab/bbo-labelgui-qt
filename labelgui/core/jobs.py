@@ -2,11 +2,13 @@
 from datetime import datetime
 from pathlib import Path
 import shutil
+import logging
 
 import yaml
 
 from .configuration import CONFIG_EXTENSIONS
 
+logger = logging.getLogger(__name__)
 
 class JobRepository:
     def __init__(self, drive, defaults_file=None):
@@ -23,6 +25,7 @@ class JobRepository:
 
     def read_defaults(self):
         if self.defaults_file.is_file():
+            logger.info('Loading user defaults: %s', self.defaults_file.resolve())
             with self.defaults_file.open() as file:
                 defaults = yaml.safe_load(file)
             if isinstance(defaults, dict) and 'user' in defaults and 'job' in defaults:
