@@ -501,6 +501,56 @@ class GuiTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
+    def test_reference_lines_connect_adjacent_files_without_bridging_missing_markers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.annotations.set_point('nose', 0, 0, (1, 2), 'alice')
+            for index in range(3):
+                reference = AnnotationStore(2)
+                reference.set_point('nose', 0, 0, (3 + index, 4 + index), 'ref')
+                # A missing marker in the middle file must break the chain.
+                if index != 1:
+                    reference.set_point('tail', 0, 0, (10 + index, 11 + index), 'ref')
+                session.references.append(reference)
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+            lines = camera.reference_lines
+            scene_items = tuple(camera.plot_wget.items())
+            try:
+                self.assertEqual(lines.opts['pen'].color(), QColor('red'))
+                self.assertLess(lines.opts['pen'].widthF(), camera.error_lines.opts['pen'].widthF())
+                self.assertEqual(lines.opts['connect'], 'pairs')
+                self.assertLess(lines.zValue(), camera.marker_items['ref_label'].zValue())
+                self.assertTrue(lines.isVisible())
+                np.testing.assert_array_equal(lines.getData(), [[3, 4, 4, 5], [4, 5, 5, 6]])
+                self.assertEqual(len(camera.error_lines.getData()[0]), 6)
+                self.assertFalse(window.subwindows[1].reference_lines.isVisible())
+
+                window.checkbox_disp_ref_annotated.setChecked(False)
+                self.assertEqual(len(camera.marker_items['ref_label'].points()), 5)
+                np.testing.assert_array_equal(lines.getData(), [[3, 4, 4, 5], [4, 5, 5, 6]])
+                # Reference connections also work when there is no user label.
+                window.viewer_click(1, 2, 0, 0, 'delete_label')
+                self.assertFalse(camera.error_lines.isVisible())
+                self.assertTrue(lines.isVisible())
+                window.checkbox_disp_ref_annotated.setChecked(True)
+                self.assertFalse(lines.isVisible())
+                self.assertEqual(len(lines.getData()[0]), 0)
+                window.checkbox_disp_ref_annotated.setChecked(False)
+                self.assertTrue(lines.isVisible())
+
+                window.set_time(.5)
+                self.assertFalse(lines.isVisible())
+                self.assertEqual(len(lines.getData()[0]), 0)
+                window.set_time(0)
+                self.assertTrue(lines.isVisible())
+                self.assertIs(camera.reference_lines, lines)
+                self.assertEqual(tuple(camera.plot_wget.items()), scene_items)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_multiple_references_preserve_duplicate_names_and_selection(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)

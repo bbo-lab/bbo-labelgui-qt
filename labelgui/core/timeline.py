@@ -5,7 +5,7 @@ import numpy as np
 
 
 class Timeline:
-    def __init__(self, camera_times, minimum=-math.inf, maximum=math.inf):
+    def __init__(self, camera_times, minimum=-math.inf, maximum=math.inf, *, labeling_times=None):
         self.camera_times = tuple(np.asarray(t, dtype=float).copy() for t in camera_times)
         if not self.camera_times:
             raise ValueError("At least one recording is required")
@@ -14,9 +14,18 @@ class Timeline:
                 raise ValueError("Each recording needs a nonempty array of finite timestamps")
             if np.any(np.diff(times) < 0):
                 raise ValueError("Camera timestamps must be ordered")
-        times = np.unique(np.concatenate(self.camera_times))
+        self.labeling_times = None
+        if labeling_times is not None:
+            times = np.asarray(labeling_times, dtype=float)
+            if times.ndim != 1 or not len(times) or not np.all(np.isfinite(times)):
+                raise ValueError('labeling_times must be a nonempty list of finite times')
+            self.labeling_times = np.unique(times)
+        times = (np.unique(np.concatenate(self.camera_times)) if self.labeling_times is None
+                 else self.labeling_times)
         self.times = times[(times >= minimum) & (times < maximum)]
         if not len(self.times):
+            if self.labeling_times is not None:
+                raise ValueError('No labeling_times fall within the configured time range')
             raise ValueError("No video frames fall within the configured time range")
         self.current_time = float(self.times[0])
 

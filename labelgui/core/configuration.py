@@ -57,6 +57,28 @@ def _path(value, name, directory):
     return str((directory / path).resolve())
 
 
+def _labeling_times(value, directory):
+    """Load explicit shared times; archive the values rather than a mutable file."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        path = Path(_path(value, 'labeling_times', directory))
+        logger.info('Loading labeling times: %s', path)
+        content = path.read_text(encoding='utf-8')
+        if path.suffix.lower() in CONFIG_EXTENSIONS:
+            try:
+                value = yaml.safe_load(content)
+            except yaml.YAMLError as error:
+                raise ValueError(f'Invalid labeling_times YAML: {path}') from error
+        else:
+            # Plain text: whitespace/comma-separated numbers, optional # comments.
+            value = ' '.join(line.partition('#')[0] for line in content.splitlines())
+            value = value.replace(',', ' ').split()
+    if not isinstance(value, list) or not value:
+        raise ValueError('labeling_times must be a nonempty list of times or a file containing one')
+    return [_number(time, f'labeling_times[{index}]') for index, time in enumerate(value)]
+
+
 def load_configuration(path):
     path = Path(path).expanduser().resolve()
     if path.suffix.lower() not in CONFIG_EXTENSIONS:
@@ -77,7 +99,7 @@ def load_configuration(path):
         cfg[key] = [_filename(value, key) for value in cfg[key]]
     camera_count = len(cfg['recording_filenames'])
     defaults = {'dataset_name': '', 'allowed_cams': list(range(camera_count)),
-                'min_time': -math.inf, 'max_time': math.inf, 'd_time': 0,
+                'min_time': -math.inf, 'max_time': math.inf, 'd_time': 0, 'labeling_times': None,
                 'video_times': {}, 'load_labels_file': None, 'reference_labels_file': False,
                 'exit_save_labels': True, 'auto_save': False, 'auto_save_N0': 10,
                 'auto_save_N1': 100, 'sketch_zoom_scale': 0.1, 'controls': {}}
@@ -92,6 +114,7 @@ def load_configuration(path):
         cfg[key] = _number(cfg[key], key, finite=False)
     if cfg['min_time'] >= cfg['max_time']:
         raise ValueError("min_time must be less than max_time")
+    cfg['labeling_times'] = _labeling_times(cfg['labeling_times'], path.parent)
     for key in ('d_time', 'sketch_zoom_scale'):
         cfg[key] = _number(cfg[key], key)
     if cfg['sketch_zoom_scale'] <= 0:

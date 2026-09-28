@@ -53,7 +53,7 @@ Defaults enable all cameras and controls, use the full recording time range and
 frame-by-frame navigation, and save changed labels on exit. Autosave is disabled
 unless enabled in the config.
 
-Relative recording-folder, sketch, timestamp-CSV, and label-file paths resolve
+Relative recording-folder, sketch, timestamp-CSV, labeling-times, and label-file paths resolve
 from the job configuration's directory. Recording filenames resolve from
 `recording_folder`. Absolute paths, BBO path placeholders (including `{file}`),
 and BBO `!include:` directives remain supported. Plain relative paths supplied
@@ -63,6 +63,30 @@ an included file for paths relative to that file.
 Existing YAML field names are retained. Explicit settings override defaults;
 omitted controls now default to enabled. Relative paths previously interpreted
 from the working directory should be updated to be relative to the config file.
+
+To restrict labeling to particular shared times (seconds), set `labeling_times`:
+
+```yaml
+labeling_times: [0.5, 1.25, 3.0, 7.5]
+min_time: 1.0
+max_time: 7.5
+d_time: 0
+```
+
+This selects `1.25` and `3.0`: the minimum is inclusive and the maximum exclusive.
+Alternatively, use `labeling_times: times.yml` for a file containing a YAML list,
+or `labeling_times: times.txt` (also `.csv`) for numbers separated by whitespace
+or commas, without a header; `#` comments are accepted. Times are sorted and
+deduplicated. Each camera displays the frame nearest the requested shared time.
+Omit the option or use `null` to retain all camera timestamps. Empty lists,
+nonfinite times, and selections emptied by the time bounds are rejected.
+
+With `d_time: 0`, next/previous navigation visits adjacent selected times;
+other step modes and manual time entry snap to the nearest selected time.
+Marked-frame navigation stays within the selection. Assisted labeling's
+**To next** is disabled when the next camera frame cannot be displayed at a
+selected time. Loaded time-list files are logged at INFO, and their values
+are saved in the processed configuration for reproducibility.
 
 ## Sketch files
 

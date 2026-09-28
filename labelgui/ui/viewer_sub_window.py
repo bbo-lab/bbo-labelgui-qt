@@ -74,6 +74,11 @@ class ViewerSubWindow(QDockWidget):
         self.error_lines.hide()
         self.plot_wget.addItem(self.error_lines)
 
+        self.reference_lines = pg.PlotCurveItem(pen=pg.mkPen('red', width=1), connect='pairs')
+        self.reference_lines.setZValue(4)
+        self.reference_lines.hide()
+        self.plot_wget.addItem(self.reference_lines)
+
         self.trajectory_item = pg.PlotDataItem(
             pen=pg.mkPen((0, 255, 255, 130), width=1), symbol='o', symbolSize=3,
             symbolPen=None, symbolBrush=pg.mkBrush(0, 255, 255, 130),
@@ -238,6 +243,14 @@ class ViewerSubWindow(QDockWidget):
         coords = np.asarray(segments, dtype=float).reshape(-1, 2)
         self.error_lines.setData(coords[:, 0], coords[:, 1])
         self.error_lines.setVisible(bool(segments))
+
+        references = {(point.reference_index, point.name): point.coords
+                      for point in self.labels['ref_label'] if point.reference_index is not None}
+        segments = [(coords, references[index + 1, name])
+                    for (index, name), coords in references.items() if (index + 1, name) in references]
+        coords = np.asarray(segments, dtype=float).reshape(-1, 2)
+        self.reference_lines.setData(coords[:, 0], coords[:, 1])
+        self.reference_lines.setVisible(bool(segments))
 
     def _update_markers(self, kind):
         labels = self.labels[kind]

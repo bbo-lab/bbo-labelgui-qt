@@ -150,7 +150,8 @@ class LabelingSession:
                 path = path_management.decode_path(Path(cfg['recording_folder']) / filename).expanduser().resolve()
                 cameras.append(Camera.open(path, filter_string, reader_factory))
             timeline = Timeline([camera_timestamps(c.reader, c.metadata, cfg['video_times'].get(i, {}))
-                                 for i, c in enumerate(cameras)], float(cfg['min_time']), float(cfg['max_time']))
+                                 for i, c in enumerate(cameras)], float(cfg['min_time']), float(cfg['max_time']),
+                                labeling_times=cfg['labeling_times'])
             sketches = []
             for filename in cfg['sketch_files']:
                 path = Path(filename)
@@ -263,6 +264,18 @@ class LabelingSession:
 
     def step_labeled(self, direction):
         """Jump to the nearest marked camera timestamp in the given direction."""
+        if self.timeline.labeling_times is not None:
+            # Requested shared times need not coincide with camera timestamps.
+            marked = [self.annotations.labeled_frames(i) for i in range(len(self.cameras))]
+            times = self.timeline.times if direction > 0 else self.timeline.times[::-1]
+            target = next((time for time in times
+                           if (time - self.current_time) * direction > 0
+                           and any(self.timeline.frame_index(i, time) in frames
+                                   for i, frames in enumerate(marked) if frames)), None)
+            if target is None:
+                return False
+            self.seek(target)
+            return True
         times = (times[frame]
                  for camera, times in enumerate(self.timeline.camera_times)
                  for frame in self.annotations.labeled_frames(camera)
@@ -298,7 +311,8 @@ class LabelingSession:
                 camera_timestamps(camera.reader, camera.metadata, self.config.get('video_times', {}).get(i, {}))
                 if i in replacements else self.timeline.camera_times[i]
                 for i, camera in enumerate(cameras)
-            ], self.config.get('min_time', -math.inf), self.config.get('max_time', math.inf))
+            ], self.config.get('min_time', -math.inf), self.config.get('max_time', math.inf),
+                labeling_times=self.timeline.labeling_times)
             timeline.seek(self.current_time)
             for index, camera in replacements.items():
                 camera.frame(timeline.frame_index(index))
@@ -329,10 +343,14 @@ class LabelingSession:
         if frame >= len(times):
             return None
         time = times[frame]
-        if not self.timeline.times[0] <= time <= self.timeline.times[-1]:
+        if (self.timeline.labeling_times is None
+                and not self.timeline.times[0] <= time <= self.timeline.times[-1]):
             return None
         # Equal timestamps cannot identify a later frame in the shared timeline.
         if self.timeline.frame_index(camera, time) != frame:
+            return None
+        # Sparse selections must actually display the frame that will be edited.
+        if self.timeline.frame_index(camera, self.timeline.nearest(time)) != frame:
             return None
         return frame
 
