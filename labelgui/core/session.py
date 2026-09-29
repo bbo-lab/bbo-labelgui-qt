@@ -9,7 +9,7 @@ import numpy as np
 from bbo import path_management
 
 from labelgui import misc
-from .annotations import AnnotationStore, nearest_point
+from .annotations import AnnotationStore, Trajectory, nearest_point
 from .configuration import archive_configuration, load_configuration
 from .diagnostics import format_frame_report
 from .persistence import LabelRepository, SaveService, load_resume_time, save_resume_time
@@ -252,8 +252,50 @@ class LabelingSession:
     def select_sketch_point(self, x, y):
         self.select_label(self.sketch.nearest_label(x, y))
 
-    def seek(self, time):
-        self.timeline.seek(time)
+    def trajectories(self, camera, names=None, *, only_allowed_times=False):
+        paths = self.annotations.trajectories(camera, names)
+        if not only_allowed_times:
+            return paths
+        # Different markers often share frames; check each frame only once.
+        frames = {frame for path in paths for frame in path.frames}
+        allowed = {frame: self.timeline.time_for_frame(camera, frame) is not None for frame in frames}
+        filtered = []
+        for path in paths:
+            mask = np.asarray([allowed[frame] for frame in path.frames], dtype=bool)
+            if mask.any():
+                filtered.append(Trajectory(path.name, path.frames[mask], path.coords[mask]))
+        return filtered
+
+    def select_trajectory_point(self, camera, name, frame, *, allow_outside_times=False):
+        """Navigate to a stored point, optionally visiting an excluded frame."""
+        times = self.timeline.camera_times[camera]
+        if not 0 <= frame < len(times) or self.annotations.point(name, frame, camera) is None:
+            return False
+        time = times[frame]
+        target = self.timeline.time_for_frame(camera, frame)
+        outside = target is None and allow_outside_times and self.timeline.frame_index(camera, time) == frame
+        if outside:
+            target = time
+        if target is None:
+            logger.info('Trajectory click ignored: marker %r, camera %d, frame %d, time %.6f s '
+                        'is outside the allowed time selection or cannot be displayed there.',
+                        name, camera, frame, time)
+            return False
+        sketch = self.current_sketch_index
+        if name not in self.sketch.locations:
+            sketch = next((i for i, item in enumerate(self.sketches) if name in item.locations), None)
+            if sketch is None:
+                return False
+        self.current_sketch_index = sketch
+        self.current_label = name
+        if outside:
+            logger.info('Trajectory click outside the allowed time selection: marker %r, camera %d, '
+                        'frame %d, time %.6f s (override enabled).', name, camera, frame, time)
+        self.seek(target, allow_outside_selection=outside)
+        return True
+
+    def seek(self, time, *, allow_outside_selection=False):
+        self.timeline.seek(time, allow_outside_selection=allow_outside_selection)
         self.log_frame()
         self.autosave_event()
 

@@ -70,6 +70,23 @@ def make_session(folder, **config):
 
 
 class TimelineTests(unittest.TestCase):
+    def test_binary_frame_lookup_preserves_nearest_ties_and_duplicates(self):
+        times = np.array([0, 0, .5, 1, 1, 1.5, 3, 3])
+        timeline = Timeline([times])
+        for time in np.unique(np.concatenate((times, (times[:-1] + times[1:]) / 2,
+                                              np.linspace(-1, 4, 101)))):
+            with self.subTest(time=time):
+                self.assertEqual(timeline.frame_index(0, time), np.argmin(abs(times - time)))
+
+    def test_steps_return_from_outside_to_adjacent_selected_times(self):
+        timeline = Timeline([[0, 1, 2, 3, 4]], labeling_times=[1, 3])
+        for outside, previous, following in ((0, 1, 1), (2, 1, 3), (4, 3, 3)):
+            timeline.seek(outside, allow_outside_selection=True)
+            self.assertEqual(timeline.step(1, 0), following)
+            timeline.seek(outside, allow_outside_selection=True)
+            self.assertEqual(timeline.step(-1, 0), previous)
+        np.testing.assert_array_equal(timeline.times, [1, 3])
+
     def test_union_limits_offsets_and_nearest_camera_frames(self):
         timeline = Timeline([[0, .5, 1], [.1, .35, .6, .85]], .1, .9)
         np.testing.assert_allclose(timeline.times, [.1, .35, .5, .6, .85])
@@ -123,20 +140,25 @@ class AnnotationTests(unittest.TestCase):
         store.set_point('tail', 3, 0, (12, 13), 'alice')
         paths = store.trajectories(0)
         self.assertEqual(len(paths), 2)
-        np.testing.assert_array_equal(paths[0], [[0, 1], [4, 5]])
-        np.testing.assert_array_equal(paths[1], [[10, 11], [12, 13]])
-        np.testing.assert_array_equal(store.trajectories(1)[0], [[20, 21]])
-        np.testing.assert_array_equal(store.trajectories(0, ['tail'])[0], paths[1])
+        self.assertEqual([path.name for path in paths], ['nose', 'tail'])
+        np.testing.assert_array_equal(paths[0].frames, [0, 4])
+        np.testing.assert_array_equal(paths[1].frames, [1, 3])
+        np.testing.assert_array_equal(paths[0].coords, [[0, 1], [4, 5]])
+        np.testing.assert_array_equal(paths[1].coords, [[10, 11], [12, 13]])
+        np.testing.assert_array_equal(store.trajectories(1)[0].frames, [2])
+        np.testing.assert_array_equal(store.trajectories(1)[0].coords, [[20, 21]])
+        np.testing.assert_array_equal(store.trajectories(0, ['tail'])[0].coords, paths[1].coords)
         self.assertEqual(store.trajectories(0, ['unknown']), [])
         self.assertEqual(store.trajectories(0, []), [])
         revision = store.revision
         store.delete_point('nose', 4, 0, 'alice')
         self.assertGreater(store.revision, revision)
-        np.testing.assert_array_equal(store.trajectories(0, ['nose'])[0], [[0, 1]])
+        np.testing.assert_array_equal(store.trajectories(0, ['nose'])[0].coords, [[0, 1]])
+        np.testing.assert_array_equal(store.trajectories(0, ['nose'])[0].frames, [0])
         revision = store.revision
         store.set_point('nose', 0, 0, (6, 7), 'alice')
         self.assertGreater(store.revision, revision)
-        np.testing.assert_array_equal(store.trajectories(0, ['nose'])[0], [[6, 7]])
+        np.testing.assert_array_equal(store.trajectories(0, ['nose'])[0].coords, [[6, 7]])
 
     def test_edit_delete_metadata_and_camera_independence(self):
         store = AnnotationStore(2, clock=lambda: 123.)
@@ -230,6 +252,120 @@ class PersistenceTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_trajectory_time_filter_preserves_samples_and_click_eligibility(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            try:
+                for camera in range(2):
+                    for frame in range(5):
+                        session.annotations.set_point('nose', frame, camera, (frame, camera), 'alice')
+                session.annotations.set_point('tail', 1, 0, (8, 9), 'alice')
+                revision = session.annotations.revision
+                # The upper bound removes 1.7; .4 and .9 select frames 1 and 2 in both cameras.
+                session.timeline = Timeline(session.timeline.camera_times, .4, 1.7,
+                                            labeling_times=[0, .4, .9, 1.7])
+                for camera in range(2):
+                    paths = session.trajectories(camera, only_allowed_times=True)
+                    self.assertEqual(paths[0].name, 'nose')
+                    np.testing.assert_array_equal(paths[0].frames, [1, 2])
+                    np.testing.assert_array_equal(paths[0].coords, [[1, camera], [2, camera]])
+                    np.testing.assert_array_equal(session.trajectories(camera)[0].frames, range(5))
+                self.assertEqual(session.trajectories(1, ['tail'], only_allowed_times=True), [])
+                self.assertEqual(session.annotations.revision, revision)
+                self.assertEqual(session.current_time, .4)
+                session.timeline = Timeline(session.timeline.camera_times, minimum=.5, maximum=1.5)
+                np.testing.assert_array_equal(session.trajectories(0, only_allowed_times=True)[0].frames, [1, 2])
+            finally:
+                session.close()
+
+    def test_trajectory_override_visits_excluded_points_without_changing_selection(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            try:
+                session.annotations.set_point('tail', 2, 1, (5, 6), 'alice')
+                revision = session.annotations.revision
+                for timeline in (Timeline(session.timeline.camera_times, labeling_times=[.1, 1.6]),
+                                 Timeline(session.timeline.camera_times, minimum=.1, maximum=1.1)):
+                    session.timeline = timeline
+                    selected = timeline.times.copy()
+                    with self.assertLogs('labelgui.core.session', level='INFO') as logs:
+                        self.assertTrue(session.select_trajectory_point(1, 'tail', 2, allow_outside_times=True))
+                    self.assertIn('override enabled', logs.output[0])
+                    self.assertEqual((session.current_time, session.current_label), (1.1, 'tail'))
+                    self.assertEqual(session.frame_index(1), 2)
+                    np.testing.assert_array_equal(timeline.times, selected)
+                    self.assertEqual(session.annotations.revision, revision)
+                    self.assertEqual(session.trajectories(1, only_allowed_times=True), [])
+                    session.step(1)
+                    self.assertIn(session.current_time, selected)
+            finally:
+                session.close()
+
+    def test_trajectory_navigation_selects_marker_and_camera_timestamp_without_edits(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            try:
+                session.annotations.set_point('tail', 2, 1, (3, 4), 'alice')
+                revision = session.annotations.revision
+                session.single_label_mode = True
+                self.assertTrue(session.select_trajectory_point(1, 'tail', 2))
+                self.assertEqual(session.current_time, 1.1)
+                self.assertEqual(session.current_label, 'tail')
+                self.assertEqual(session.frame_index(1), 2)
+                self.assertEqual(session.annotations.revision, revision)
+                self.assertFalse(session.select_trajectory_point(0, 'tail', 2))
+                self.assertFalse(session.select_trajectory_point(1, 'tail', 100))
+                session.sketches.append(Sketch(np.zeros((10, 10)), {'wing': (1, 2)}))
+                session.annotations.set_point('wing', 0, 1, (1, 2), 'alice')
+                self.assertTrue(session.select_trajectory_point(1, 'wing', 0))
+                self.assertEqual(session.current_time, .1)
+                self.assertEqual(session.current_sketch_index, 1)
+                self.assertEqual(session.current_label, 'wing')
+            finally:
+                session.close()
+
+    def test_trajectory_navigation_respects_selection_and_logs_rejected_points(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            try:
+                session.annotations.set_point('tail', 1, 1, (3, 4), 'alice')
+                session.annotations.set_point('tail', 2, 1, (5, 6), 'alice')
+                session.timeline = Timeline(session.timeline.camera_times, labeling_times=[0, .9])
+                with self.assertLogs('labelgui.core.session', level='INFO') as logs:
+                    self.assertFalse(session.select_trajectory_point(1, 'tail', 1))
+                message = logs.records[0].getMessage()
+                for text in ('tail', 'camera 1', 'frame 1', '0.600000 s', 'outside the allowed time selection'):
+                    self.assertIn(text, message)
+                self.assertEqual((session.current_time, session.current_label), (0, 'nose'))
+                self.assertTrue(session.select_trajectory_point(1, 'tail', 2))
+                self.assertEqual(session.current_time, .9)
+                self.assertEqual(session.frame_index(1), 2)
+                # The maximum is exclusive, including when no explicit list is given.
+                session.timeline = Timeline(session.timeline.camera_times, minimum=.5, maximum=1.1)
+                session.select_label('nose')
+                with self.assertLogs('labelgui.core.session', level='INFO'):
+                    self.assertFalse(session.select_trajectory_point(1, 'tail', 2))
+                self.assertEqual((session.current_time, session.current_label), (.5, 'nose'))
+                self.assertTrue(session.select_trajectory_point(1, 'tail', 1))
+                self.assertEqual(session.current_time, .6)
+            finally:
+                session.close()
+
+    def test_trajectory_navigation_handles_irregular_and_duplicate_camera_timestamps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            try:
+                session.annotations.set_point('tail', 1, 0, (3, 4), 'alice')
+                session.timeline = Timeline([[0, 100, 101], [0, 100, 101]], labeling_times=[90, 102])
+                session.seek(102)
+                self.assertTrue(session.select_trajectory_point(0, 'tail', 1))
+                self.assertEqual(session.current_time, 90)
+                session.timeline = Timeline([[0, 0, 1], [0, 0, 1]])
+                with self.assertLogs('labelgui.core.session', level='INFO'):
+                    self.assertFalse(session.select_trajectory_point(0, 'tail', 1))
+            finally:
+                session.close()
+
     def test_video_filter_replacement_refreshes_timeline_and_keeps_labels(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder, video_times={1: {'offset': .1}})

@@ -30,6 +30,12 @@ max_time: .inf
 # Times are sorted and deduplicated, then filtered by min_time <= t < max_time.
 # Each camera displays its nearest frame. An empty effective list is an error.
 labeling_times: null
+# Initial state of View > Trajectories > Only points in allowed time selection.
+# Filters trajectory samples using labeling_times and min_time/max_time.
+trajectory_only_allowed_times: false
+# Initial state of View > Trajectories > Allow clicks outside time selection.
+# Lets a trajectory click visit an excluded frame without changing the selection.
+trajectory_allow_outside_times: false
 # 0: next/previous shared timepoint; >0: step in seconds;
 # -1: step by camera 0 frames; -2: step by camera 1 frames; etc.
 d_time: 0

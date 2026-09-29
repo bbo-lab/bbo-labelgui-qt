@@ -16,6 +16,13 @@ class Point:
 
 
 @dataclass(frozen=True)
+class Trajectory:
+    name: str
+    frames: np.ndarray
+    coords: np.ndarray
+
+
+@dataclass(frozen=True)
 class FrameAnnotations:
     points: tuple[Point, ...]
     references: tuple[Point, ...]
@@ -85,7 +92,7 @@ class AnnotationStore:
                 if np.all(np.isfinite(entry['coords'][camera]))}
 
     def trajectories(self, camera, names=None):
-        """Recorded positions in frame order, one nonempty array per marker.
+        """Recorded positions and camera frame indices, one trajectory per marker.
 
         Sparse annotations are connected across frame gaps; guesses and missing
         camera coordinates are excluded.
@@ -94,11 +101,12 @@ class AnnotationStore:
         paths = []
         for name in labels if names is None else names:
             frames = labels.get(name, {})
-            coords = np.asarray([frames[frame]['coords'][camera] for frame in sorted(frames)],
+            indices = np.asarray(sorted(frames), dtype=int)
+            coords = np.asarray([frames[frame]['coords'][camera] for frame in indices],
                                 dtype=float).reshape(-1, 2)
-            coords = coords[np.isfinite(coords).all(axis=1)]
-            if len(coords):
-                paths.append(coords)
+            valid = np.isfinite(coords).all(axis=1)
+            if valid.any():
+                paths.append(Trajectory(name, indices[valid], coords[valid]))
         return paths
 
     def guess(self, name, frame, camera):

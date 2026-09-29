@@ -37,19 +37,47 @@ class Timeline:
         candidates = self.times if value >= self.current_time else self.times[::-1]
         return float(candidates[np.argmin(np.abs(candidates - value))])
 
-    def seek(self, value):
-        self.current_time = self.nearest(value)
+    def seek(self, value, *, allow_outside_selection=False):
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError("Time must be finite")
+        self.current_time = value if allow_outside_selection else self.nearest(value)
         return self.current_time
 
     def frame_index(self, camera, time=None):
         time = self.current_time if time is None else time
-        return int(np.argmin(np.abs(self.camera_times[camera] - time)))
+        times = self.camera_times[camera]
+        right = min(int(np.searchsorted(times, time)), len(times) - 1)
+        left = max(0, right - 1)
+        index = left if abs(times[left] - time) <= abs(times[right] - time) else right
+        # As with argmin, ties and duplicate timestamps choose the first frame.
+        return int(np.searchsorted(times, times[index]))
+
+    def time_for_frame(self, camera, frame):
+        """Allowed shared time displaying this frame, or None if it is excluded."""
+        times = self.camera_times[camera]
+        if not 0 <= frame < len(times):
+            return None
+        time = times[frame]
+        index = np.searchsorted(self.times, time)
+        if self.labeling_times is None:
+            if index == len(self.times) or self.times[index] != time:
+                return None
+            candidates = [time]
+        else:
+            # With irregular intervals, the farther side may be the only match.
+            candidates = sorted(self.times[max(0, index - 1):index + 1],
+                                key=lambda candidate: abs(candidate - time))
+        return next((float(candidate) for candidate in candidates
+                     if self.frame_index(camera, candidate) == frame), None)
 
     def step(self, count, interval):
         if not math.isfinite(interval):
             raise ValueError("Time step must be finite")
         if interval == 0:
             index = int(np.searchsorted(self.times, self.current_time))
+            if count > 0 and (index == len(self.times) or self.times[index] != self.current_time):
+                index -= 1
             index = int(np.clip(index + count, 0, len(self.times) - 1))
             return self.seek(self.times[index])
         if interval < 0:

@@ -384,6 +384,67 @@ class GuiTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
+    def test_single_label_mode_mouse_toggle_off_stops_advancing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.cameras[0].reader = PeakReader()
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+            camera.setFloating(True)
+            camera.resize(640, 480)
+            camera.show()
+            window.dock_controls.setFloating(True)
+            window.dock_controls.resize(420, 620)
+            window.dock_controls.show()
+            self.app.processEvents()
+            button = window.dock_controls.widgets['buttons']['single_label_mode']
+
+            def place(modifier=Qt.KeyboardModifier.NoModifier, mouse_button=Qt.MouseButton.LeftButton):
+                point = camera.plot_wget.mapFromScene(camera.view_box.mapViewToScene(QPointF(6, 5)))
+                QTest.mouseClick(camera.plot_wget.viewport(), mouse_button, modifier, pos=point)
+
+            try:
+                self.assertFalse(button.isChecked())
+                self.assertFalse(session.single_label_mode)
+                for _ in range(3):
+                    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+                    self.assertTrue(button.isChecked())
+                    self.assertTrue(session.single_label_mode)
+                    time = session.current_time
+                    place()
+                    self.assertGreater(session.current_time, time)
+                    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+                    self.assertFalse(button.isChecked())
+                    self.assertFalse(session.single_label_mode)
+                    time = session.current_time
+                    with patch.object(window.synchronizer, 'publish') as publish:
+                        place()
+                        self.assertEqual(session.current_time, time)
+                        place(Qt.KeyboardModifier.AltModifier)
+                        self.assertEqual(session.current_time, time)
+                        place(mouse_button=Qt.MouseButton.RightButton)
+                        self.assertEqual(session.current_time, time)
+                        publish.assert_not_called()
+                    self.assertFalse(button.isChecked())
+                    self.assertFalse(session.single_label_mode)
+                # Trajectory navigation remains independent of auto-advance.
+                session.annotations.set_point('tail', 3, 0, (9, 8), 'alice')
+                revision = session.annotations.revision
+                actions = {action.data(): action for action in window.trajectory_actions.actions()}
+                actions['all'].trigger()
+                point = camera.plot_wget.mapFromScene(camera.view_box.mapViewToScene(QPointF(9, 8)))
+                QTest.mouseClick(camera.plot_wget.viewport(), Qt.MouseButton.LeftButton,
+                                 Qt.KeyboardModifier.ShiftModifier, pos=point)
+                self.assertEqual(session.current_time, 1.5)
+                self.assertEqual(session.current_label, 'tail')
+                self.assertEqual(session.annotations.revision, revision)
+                self.assertFalse(button.isChecked())
+                self.assertFalse(session.single_label_mode)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_window_binds_session_and_renders_annotations(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)
@@ -586,6 +647,210 @@ class GuiTests(unittest.TestCase):
                 self.assertFalse(refs.isVisible())
                 self.assertEqual(len(refs.points()), 0)
                 self.assertFalse(camera.error_lines.isVisible())
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_shift_click_selects_nearest_visible_label_or_trajectory_and_plain_click_places(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.annotations.set_point('nose', 0, 0, (2, 2), 'alice')
+            session.annotations.set_point('tail', 0, 0, (4, 2), 'alice')
+            session.annotations.set_point('tail', 2, 0, (10, 8), 'alice')
+            revision = session.annotations.revision
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+            camera.setFloating(True)
+            camera.resize(640, 480)
+            camera.show()
+            actions = {action.data(): action for action in window.trajectory_actions.actions()}
+            actions['all'].trigger()
+            self.app.processEvents()
+
+            def click(x, y, modifier=Qt.KeyboardModifier.ShiftModifier):
+                point = camera.plot_wget.mapFromScene(camera.view_box.mapViewToScene(QPointF(x, y)))
+                QTest.mouseClick(camera.plot_wget.viewport(), Qt.MouseButton.LeftButton, modifier, pos=point)
+
+            try:
+                # Clicks are well outside the tiny symbols; nearest selection still works.
+                with patch.object(window.synchronizer, 'publish') as publish:
+                    click(5, 2)
+                    self.assertEqual((session.current_time, session.current_label), (0, 'tail'))
+                    publish.assert_not_called()
+                    click(9, 7)
+                    self.assertEqual((session.current_time, session.current_label), (1, 'tail'))
+                    publish.assert_called_once_with(1)
+                window.set_time(0, mqtt_publish=False)
+                window.set_current_label('nose')
+                actions['off'].trigger()
+                click(9, 7)
+                self.assertEqual((session.current_time, session.current_label), (0, 'tail'))
+                self.assertEqual(session.annotations.revision, revision)
+
+                actions['all'].trigger()
+                window.set_current_label('nose')
+                with patch.object(window.synchronizer, 'publish') as publish:
+                    click(10, 8, Qt.KeyboardModifier.NoModifier)
+                    self.assertEqual((session.current_time, session.current_label), (0, 'nose'))
+                    publish.assert_not_called()
+                np.testing.assert_allclose(session.annotations.point('nose', 0, 0), (10, 8), atol=.05)
+                self.assertGreater(session.annotations.revision, revision)
+                # Exact overlapping coordinates prefer the current label, not a future frame.
+                session.annotations.set_point('nose', 0, 0, (10, 8), 'alice')
+                window._render_frame(images=False)
+                window.set_current_label('tail')
+                camera.rotate_view(90)
+                self.app.processEvents()
+                revision = session.annotations.revision
+                click(10.5, 8.5)
+                self.assertEqual((session.current_time, session.current_label), (0, 'nose'))
+                self.assertEqual(session.annotations.revision, revision)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_trajectory_clicks_navigate_or_log_without_creating_labels(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.timeline = Timeline(session.timeline.camera_times, labeling_times=[.1, .6])
+            session.annotations.set_point('nose', 0, 1, (2, 2), 'alice')
+            session.annotations.set_point('tail', 1, 1, (7, 5), 'alice')
+            session.annotations.set_point('tail', 3, 1, (9, 8), 'alice')
+            revision = session.annotations.revision
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[1]
+            camera.setFloating(True)
+            camera.resize(640, 480)
+            camera.show()
+            actions = {action.data(): action for action in window.trajectory_actions.actions()}
+            actions['all'].trigger()
+            self.app.processEvents()
+
+            def click(x, y, modifiers=Qt.KeyboardModifier.ShiftModifier):
+                scene_pos = camera.view_box.mapViewToScene(QPointF(x, y))
+                point = camera.plot_wget.mapFromScene(scene_pos)
+                QTest.mouseClick(camera.plot_wget.viewport(), Qt.MouseButton.LeftButton,
+                                 modifiers, pos=point)
+
+            try:
+                self.assertEqual([p.data() for p in camera.trajectory_item.scatter.points()],
+                                 [('nose', 0), ('tail', 1), ('tail', 3)])
+                with patch.object(window.synchronizer, 'publish') as publish:
+                    with self.assertLogs('labelgui.core.session', level='INFO') as logs:
+                        click(9, 8)
+                    self.assertIn('outside the allowed time selection', logs.output[0])
+                    publish.assert_not_called()
+                    self.assertEqual((session.current_time, session.current_label), (.1, 'nose'))
+                    click(7, 5)
+                    publish.assert_called_once_with(.6)
+                    self.assertEqual((session.current_time, session.current_label), (.6, 'tail'))
+                    self.assertEqual(camera.frame_idx, 1)
+                    self.assertEqual(window.active_camera, 1)
+                    self.assertEqual(window.dock_sketch.list_labels.currentItem().text(), 'tail')
+                click(2, 2, Qt.KeyboardModifier.ShiftModifier)
+                self.assertEqual((session.current_time, session.current_label), (.1, 'nose'))
+                self.assertEqual(session.annotations.revision, revision)
+                # Active-only trajectories use the same click metadata after a rotated view.
+                window.set_current_label('tail')
+                actions['active'].trigger()
+                camera.rotate_view(90)
+                self.app.processEvents()
+                click(7, 5)
+                self.assertEqual((session.current_time, session.current_label), (.6, 'tail'))
+                self.assertEqual(session.annotations.revision, revision)
+                # Hidden trajectories must not intercept normal label placement.
+                actions['off'].trigger()
+                click(9, 8, Qt.KeyboardModifier.NoModifier)
+                self.assertGreater(session.annotations.revision, revision)
+                self.assertEqual(session.current_time, .6)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_trajectory_time_filter_menu_preserves_metadata_and_plot_items(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder, trajectory_only_allowed_times=True)
+            session.timeline = Timeline(session.timeline.camera_times, labeling_times=[0, 1])
+            for frame in range(3):
+                session.annotations.set_point('nose', frame, 0, (frame + 2, 3), 'alice')
+            session.annotations.set_point('tail', 1, 0, (7, 8), 'alice')
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+            item = camera.trajectory_item
+            scene_items = tuple(camera.plot_wget.items())
+            actions = {action.data(): action for action in window.trajectory_actions.actions()}
+            try:
+                self.assertTrue(window.trajectory_time_filter.isChecked())
+                actions['all'].trigger()
+                self.assertEqual([p.data() for p in item.scatter.points()], [('nose', 0), ('nose', 2)])
+                np.testing.assert_array_equal(item.getData(), [[2, 4], [3, 3]])
+                with patch.object(camera, 'redraw_frame') as redraw:
+                    window.trajectory_time_filter.setChecked(False)
+                    self.assertEqual(len(item.scatter.points()), 4)
+                    window.trajectory_time_filter.setChecked(True)
+                    redraw.assert_not_called()
+                window.set_current_label('tail')
+                actions['active'].trigger()
+                self.assertFalse(item.isVisible())
+                actions['off'].trigger()
+                window.trajectory_time_filter.setChecked(False)
+                self.assertFalse(item.isVisible())
+                actions['active'].trigger()
+                self.assertEqual([p.data() for p in item.scatter.points()], [('tail', 1)])
+                window.trajectory_time_filter.setChecked(True)
+                # Timeline replacement (e.g. video filters) invalidates the cached paths.
+                session.timeline = Timeline(session.timeline.camera_times, labeling_times=[.5])
+                window._render_frame()
+                self.assertTrue(item.isVisible())
+                self.assertIs(camera.trajectory_item, item)
+                self.assertEqual(tuple(camera.plot_wget.items()), scene_items)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_trajectory_click_override_menu_and_yaml_default(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder, trajectory_allow_outside_times=True)
+            session.timeline = Timeline(session.timeline.camera_times, labeling_times=[0, 1])
+            session.annotations.set_point('tail', 1, 0, (7, 5), 'alice')
+            revision = session.annotations.revision
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+            camera.setFloating(True)
+            camera.resize(640, 480)
+            camera.show()
+            actions = {action.data(): action for action in window.trajectory_actions.actions()}
+            actions['all'].trigger()
+            self.app.processEvents()
+
+            def click():
+                point = camera.plot_wget.mapFromScene(camera.view_box.mapViewToScene(QPointF(7, 5)))
+                QTest.mouseClick(camera.plot_wget.viewport(), Qt.MouseButton.LeftButton,
+                                 Qt.KeyboardModifier.ShiftModifier, pos=point)
+
+            try:
+                self.assertTrue(window.trajectory_allow_outside.isChecked())
+                with patch.object(window.synchronizer, 'publish') as publish:
+                    click()
+                    self.assertEqual((session.current_time, session.current_label), (.5, 'tail'))
+                    self.assertEqual(camera.frame_idx, 1)
+                    publish.assert_called_once_with(.5)
+                window.goto_next_time()
+                self.assertEqual(session.current_time, 1)
+                click()
+                window.goto_previous_time()
+                self.assertEqual(session.current_time, 0)
+                window.set_current_label('nose')
+                window.trajectory_allow_outside.setChecked(False)
+                with self.assertLogs('labelgui.core.session', level='INFO'):
+                    click()
+                self.assertEqual((session.current_time, session.current_label), (0, 'nose'))
+                self.assertEqual(session.annotations.revision, revision)
+                np.testing.assert_array_equal(session.timeline.times, [0, 1])
             finally:
                 window.close()
                 window.deleteLater()

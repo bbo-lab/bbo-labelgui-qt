@@ -92,6 +92,14 @@ class MainWindow(QMainWindow):
             action.setChecked(mode == self.trajectory_mode)
             self.trajectory_actions.addAction(action)
         self.trajectory_actions.triggered.connect(self._trajectory_mode_changed)
+        trajectories.addSeparator()
+        self.trajectory_time_filter = trajectories.addAction('Only points in allowed time selection')
+        self.trajectory_time_filter.setCheckable(True)
+        self.trajectory_time_filter.setChecked(self.session.config.get('trajectory_only_allowed_times', False))
+        self.trajectory_time_filter.toggled.connect(self._render_trajectories)
+        self.trajectory_allow_outside = trajectories.addAction('Allow clicks outside time selection')
+        self.trajectory_allow_outside.setCheckable(True)
+        self.trajectory_allow_outside.setChecked(self.session.config.get('trajectory_allow_outside_times', False))
         menu.addSection('Reference labels')
         self.checkbox_disp_ref_annotated = menu.addAction('&Only Display Annotated')
         self.checkbox_disp_ref_annotated.setCheckable(True)
@@ -105,6 +113,8 @@ class MainWindow(QMainWindow):
                 window.setWindowTitle(f'{camera.path.name} ({index})')
                 window.connect_controls()
                 window.mouse_clicked_signal.connect(self.viewer_click)
+                window.trajectory_clicked_signal.connect(self.trajectory_click)
+                window.marker_selected_signal.connect(self.viewer_select_label)
                 window.view_box.mouse_wheel_signal.connect(
                     lambda delta, camera=index: self.viewer_wheel_event(delta, camera))
                 window.key_pressed_signal.connect(self._handle_shortcut)
@@ -204,7 +214,8 @@ class MainWindow(QMainWindow):
     def _render_trajectories(self):
         annotations = self.session.annotations
         name = self.session.current_label if self.trajectory_mode == 'active' else None
-        key = (annotations.revision, self.trajectory_mode, name)
+        only_allowed = self.trajectory_time_filter.isChecked()
+        key = (annotations.revision, self.trajectory_mode, name, only_allowed, self.session.timeline)
         if key == self._trajectory_key:
             return
         for camera, window in self.subwindows.items():
@@ -212,7 +223,7 @@ class MainWindow(QMainWindow):
                 window.trajectory_item.hide()
             else:
                 names = (name,) if self.trajectory_mode == 'active' else None
-                window.set_trajectories(annotations.trajectories(camera, names))
+                window.set_trajectories(self.session.trajectories(camera, names, only_allowed_times=only_allowed))
         self._trajectory_key = key
 
     def _render_frame(self, images=True):
@@ -248,6 +259,23 @@ class MainWindow(QMainWindow):
             self._render_frame(images=changed_time)
             if changed_time:
                 self.synchronizer.publish(self.session.current_time)
+
+    def viewer_select_label(self, camera, name):
+        self._set_active_camera(camera)
+        self.set_current_label(name)
+
+    def trajectory_click(self, camera, name, frame):
+        previous_time = self.session.current_time
+        previous_sketch = self.session.current_sketch_index
+        if not self.session.select_trajectory_point(camera, name, frame,
+                                                    allow_outside_times=self.trajectory_allow_outside.isChecked()):
+            return
+        self._set_active_camera(camera)
+        if previous_sketch != self.session.current_sketch_index:
+            self._render_sketch()
+        self._render_frame(images=previous_time != self.session.current_time)
+        if previous_time != self.session.current_time:
+            self.synchronizer.publish(self.session.current_time)
 
     def set_current_label(self, name):
         if self.session.select_label(name):

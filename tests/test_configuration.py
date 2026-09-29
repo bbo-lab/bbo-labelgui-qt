@@ -44,6 +44,15 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertTrue(all(cfg['controls']['buttons'].values()))
                 self.assertTrue(all(cfg['controls']['fields'].values()))
 
+    def test_trajectory_options_default_off_and_require_booleans(self):
+        for key in ('trajectory_only_allowed_times', 'trajectory_allow_outside_times'):
+            with self.subTest(key=key):
+                self.assertFalse(load_configuration(self.write_config(self.minimal))[key])
+                self.assertTrue(load_configuration(self.write_config(self.minimal | {key: True}))[key])
+                for invalid in (None, 1, 'true', []):
+                    with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, key):
+                        load_configuration(self.write_config(self.minimal | {key: invalid}))
+
     def test_optional_paths_and_partial_controls(self):
         cfg = load_configuration(self.write_config(self.minimal | {
             'recording_folder': str(self.root / 'absolute'),

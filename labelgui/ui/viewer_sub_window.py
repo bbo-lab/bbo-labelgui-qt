@@ -25,6 +25,8 @@ class CustomViewBox(pg.ViewBox):
 class ViewerSubWindow(QDockWidget):
     """A camera view that can be docked, tabbed, or floated onto another screen."""
     mouse_clicked_signal = Signal(float, float, int, int, str)
+    trajectory_clicked_signal = Signal(int, str, int)
+    marker_selected_signal = Signal(int, str)
     key_pressed_signal = Signal(object)
     marker_params = {
         'label': {'symbol': 'o', 'brush': 'cyan', 'size': 6},
@@ -221,11 +223,12 @@ class ViewerSubWindow(QDockWidget):
 
     def set_trajectories(self, paths):
         """Batch all paths into one plot, without joining different markers."""
-        coords = np.concatenate(paths) if paths else np.empty((0, 2))
+        coords = np.concatenate([path.coords for path in paths]) if paths else np.empty((0, 2))
+        samples = [(path.name, int(frame)) for path in paths for frame in path.frames]
         connect = np.ones(len(coords), dtype=bool)
         if paths:
-            connect[np.cumsum([len(path) for path in paths]) - 1] = False
-        self.trajectory_item.setData(coords[:, 0], coords[:, 1], connect=connect)
+            connect[np.cumsum([len(path.coords) for path in paths]) - 1] = False
+        self.trajectory_item.setData(coords[:, 0], coords[:, 1], connect=connect, data=samples)
         self.trajectory_item.setVisible(bool(len(coords)))
 
     def set_annotations(self, view, current_label=None):
@@ -274,6 +277,37 @@ class ViewerSubWindow(QDockWidget):
             if any(point.name in (previous, label_name) for point in self.labels[kind]):
                 self._update_markers(kind)
 
+    def select_nearest(self, scene_coords):
+        """Select the closest visible label or trajectory sample in screen space."""
+        nearest = None
+        distance = float('inf')
+        # Prefer current labels on ties, then recorded trajectories over guesses.
+        for kind, item in (('label', self.marker_items['label']),
+                           ('trajectory', self.trajectory_item.scatter),
+                           ('guess_label', self.marker_items['guess_label'])):
+            if not item.isVisible():
+                continue
+            x, y = item.getData()
+            if x is None or not len(x):
+                continue
+            position = item.mapFromScene(scene_coords)
+            dx, dy = x - position.x(), y - position.y()
+            transform = item.sceneTransform()
+            distances = ((transform.m11() * dx + transform.m21() * dy) ** 2
+                         + (transform.m12() * dx + transform.m22() * dy) ** 2)
+            index = int(np.argmin(distances))
+            if distances[index] < distance:
+                distance = distances[index]
+                nearest = kind, item.points()[index].data()
+        if nearest is None:
+            return
+        kind, data = nearest
+        if kind == 'trajectory':
+            name, frame = data
+            self.trajectory_clicked_signal.emit(self.index, name, frame)
+        else:
+            self.marker_selected_signal.emit(self.index, data)
+
     def mouse_clicked(self, event):
         """
        Handle mouse click events on the plot widget.
@@ -301,7 +335,10 @@ class ViewerSubWindow(QDockWidget):
             # Left click
             if event.button() == Qt.MouseButton.LeftButton:
                 if modifiers == Qt.KeyboardModifier.ShiftModifier:
-                    action_str = 'select_label'
+                    # Even empty or disallowed selections must never place labels.
+                    event.accept()
+                    self.select_nearest(scene_coords)
+                    return
                 elif modifiers == Qt.KeyboardModifier.ControlModifier:
                     action_str = 'select_ref_label'
                 elif modifiers == Qt.KeyboardModifier.AltModifier:

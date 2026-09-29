@@ -166,6 +166,30 @@ from all annotated frames on each camera's current image. **Hidden** (the defaul
 turns them off. Paths connect recorded positions in frame order, including across
 gaps in labeling; guesses and reference labels are excluded. Small dots show the
 recorded positions, and paths update when annotations or the active marker change.
+Enable **View → Trajectories → Only points in allowed time selection** to hide
+samples outside `labeling_times` and `min_time`/`max_time`. This works with either
+active-marker or all-marker trajectories and preserves the connections between
+remaining samples. Set `trajectory_only_allowed_times: true` in the job YAML to
+enable it initially (default: `false`). Filtering uses the same frame eligibility
+rules as clicking trajectory points.
+
+**Shift + left-click** selects the nearest visible label marker or trajectory
+point; clicking directly on a dot is not required. Selecting a trajectory point
+jumps to that camera frame. Current label markers take priority when positions
+coincide. Plain left-click always places a label, including over a trajectory.
+If the marker belongs to another sketch, that sketch
+is selected too. Navigation respects `min_time`, `max_time`, and `labeling_times`:
+an explicit time list must contain a shared time displaying that exact camera
+frame. Clicking an excluded point leaves the time and active marker unchanged
+and logs an INFO message with its marker, camera, frame, and time. Alt/Ctrl clicks
+and right-clicks retain their editing actions.
+
+Enable **View → Trajectories → Allow clicks outside time selection** to visit
+excluded points at their camera timestamp. Set `trajectory_allow_outside_times: true`
+in the job YAML to enable this initially (default: `false`). Such visits
+are logged at INFO and do not modify the configured selection. Normal
+next/previous navigation returns to the selected times. Disable the trajectory
+time filter above to make excluded points visible and clickable.
 
 ## Compiling to exe
 1. `conda activate bbo_labelgui_qt`.

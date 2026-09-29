@@ -100,6 +100,7 @@ def load_configuration(path):
     camera_count = len(cfg['recording_filenames'])
     defaults = {'dataset_name': '', 'allowed_cams': list(range(camera_count)),
                 'min_time': -math.inf, 'max_time': math.inf, 'd_time': 0, 'labeling_times': None,
+                'trajectory_only_allowed_times': False, 'trajectory_allow_outside_times': False,
                 'video_times': {}, 'load_labels_file': None, 'reference_labels_file': False,
                 'exit_save_labels': True, 'auto_save': False, 'auto_save_N0': 10,
                 'auto_save_N1': 100, 'sketch_zoom_scale': 0.1, 'controls': {}}
@@ -119,7 +120,7 @@ def load_configuration(path):
         cfg[key] = _number(cfg[key], key)
     if cfg['sketch_zoom_scale'] <= 0:
         raise ValueError("sketch_zoom_scale must be positive")
-    for key in ('auto_save', 'exit_save_labels'):
+    for key in ('auto_save', 'exit_save_labels', 'trajectory_only_allowed_times', 'trajectory_allow_outside_times'):
         if type(cfg[key]) is not bool:
             raise ValueError(f"{key} must be true or false")
     for key in ('auto_save_N0', 'auto_save_N1'):
