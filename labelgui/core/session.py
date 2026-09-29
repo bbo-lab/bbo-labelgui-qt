@@ -12,7 +12,7 @@ from labelgui import misc
 from .annotations import AnnotationStore, Trajectory, nearest_point
 from .configuration import archive_configuration, load_configuration
 from .diagnostics import format_frame_report
-from .persistence import LabelRepository, SaveService, load_resume_time, save_resume_time
+from .persistence import LabelRepository, SaveService, load_resume_state, save_resume_time
 from .sketch import Sketch
 from .timeline import Timeline
 from .local_search import brightness, find_local_peak
@@ -193,9 +193,10 @@ class LabelingSession:
                 else:
                     logger.warning('Reference labels do not exist: %s', source)
             annotations = AnnotationStore(len(cameras), labels)
-            resume_time = load_resume_time(folder)
+            resume_state = load_resume_state(folder)
+            resume_time = resume_state.get('i_time')
             if resume_time in timeline.times:
-                timeline.seek(resume_time)
+                timeline.seek(resume_time, sequence_index=resume_state.get('time_index'))
             return cls(user=user, config=cfg, cameras=cameras, sketches=sketches,
                        timeline=timeline, labels_folder=folder, annotations=annotations,
                        references=references, reference_markers=reference_markers,
@@ -309,7 +310,17 @@ class LabelingSession:
         if self.timeline.labeling_times is not None:
             # Requested shared times need not coincide with camera timestamps.
             marked = [self.annotations.labeled_frames(i) for i in range(len(self.cameras))]
-            times = self.timeline.times if direction > 0 else self.timeline.times[::-1]
+            if self.d_time == 0:
+                index = next((index for index in self.timeline.navigation_indices(direction)
+                              if any(self.timeline.frame_index(i, self.timeline.times[index]) in frames
+                                     for i, frames in enumerate(marked) if frames)), None)
+                if index is None:
+                    return False
+                self.timeline.seek_index(index)
+                self.log_frame()
+                self.autosave_event()
+                return True
+            times = self.timeline.sorted_times if direction > 0 else self.timeline.sorted_times[::-1]
             target = next((time for time in times
                            if (time - self.current_time) * direction > 0
                            and any(self.timeline.frame_index(i, time) in frames
@@ -355,7 +366,7 @@ class LabelingSession:
                 for i, camera in enumerate(cameras)
             ], self.config.get('min_time', -math.inf), self.config.get('max_time', math.inf),
                 labeling_times=self.timeline.labeling_times)
-            timeline.seek(self.current_time)
+            timeline.seek(self.current_time, sequence_index=self.timeline.current_index)
             for index, camera in replacements.items():
                 camera.frame(timeline.frame_index(index))
         except Exception:
@@ -489,7 +500,7 @@ class LabelingSession:
             self.save()
         # A failed save leaves the session usable so the UI can offer a retry.
         self.saver.check(wait=True)
-        save_resume_time(self.labels_folder, self.current_time)
+        save_resume_time(self.labels_folder, self.current_time, time_index=self.timeline.current_index)
         self.saver.close()
         self._close_cameras(self.cameras)
         self._closed = True

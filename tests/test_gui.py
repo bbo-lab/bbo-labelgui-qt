@@ -384,6 +384,30 @@ class GuiTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
+    def test_next_previous_buttons_follow_ordered_selection_with_duplicates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.timeline = Timeline(session.timeline.camera_times, labeling_times=[1.5, .5, .5, 1])
+            window = MainWindow(session=session, sync=False)
+            buttons = window.dock_controls.widgets['buttons']
+            try:
+                self.assertEqual(session.current_time, 1.5)
+                buttons['next_time'].click()
+                self.assertEqual((session.current_time, session.timeline.current_index), (.5, 1))
+                buttons['next_time'].click()
+                self.assertEqual((session.current_time, session.timeline.current_index), (.5, 2))
+                buttons['next_time'].click()
+                self.assertEqual((session.current_time, session.timeline.current_index), (1, 3))
+                buttons['previous_time'].click()
+                self.assertEqual((session.current_time, session.timeline.current_index), (.5, 2))
+                buttons['single_label_mode'].click()
+                window.viewer_click(3, 4, session.frame_index(0), 0)
+                self.assertEqual((session.current_time, session.timeline.current_index), (1, 3))
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_single_label_mode_mouse_toggle_off_stops_advancing(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)

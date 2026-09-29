@@ -67,13 +67,16 @@ class LabelingTimesTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.configure(labeling_times='missing.txt')
 
-    def test_sort_deduplicate_filter_and_map_to_camera_frames(self):
+    def test_preserve_order_and_duplicates_while_filtering_and_mapping_frames(self):
         timeline = Timeline([[0, 1, 2, 3], [.1, .6, 1.1, 1.6, 2.1, 2.6]],
                             minimum=.5, maximum=2.5,
                             labeling_times=[2.5, 1.2, .5, 1.2, 0])
-        np.testing.assert_array_equal(timeline.times, [.5, 1.2])
-        self.assertEqual(timeline.current_time, .5)
+        np.testing.assert_array_equal(timeline.times, [1.2, .5, 1.2])
+        self.assertEqual(timeline.current_time, 1.2)
+        self.assertEqual(timeline.current_index, 0)
+        self.assertEqual(timeline.step(1, 0), .5)
         self.assertEqual(timeline.step(1, 0), 1.2)
+        self.assertEqual(timeline.current_index, 2)
         self.assertEqual([timeline.frame_index(i) for i in range(2)], [1, 2])
         self.assertEqual(timeline.step(1, 0), 1.2)
         self.assertEqual(timeline.step(-1, 0), .5)
@@ -82,6 +85,43 @@ class LabelingTimesTests(unittest.TestCase):
         for interval in (1, -1, -2):
             self.assertEqual(timeline.step(1, interval), 1.2)
             timeline.seek(.5)
+
+    def test_duplicate_occurrences_step_independently_in_both_directions(self):
+        timeline = Timeline([[0, 1, 2, 3]], labeling_times=[3, 1, 1, 2])
+        self.assertEqual(timeline.current_time, 3)
+        for index, value in ((1, 1), (2, 1), (3, 2), (3, 2)):
+            self.assertEqual(timeline.step(1, 0), value)
+            self.assertEqual(timeline.current_index, index)
+        for index, value in ((2, 1), (1, 1), (0, 3), (0, 3)):
+            self.assertEqual(timeline.step(-1, 0), value)
+            self.assertEqual(timeline.current_index, index)
+        timeline.step(2, 0)
+        self.assertEqual(timeline.current_index, 2)
+        timeline.seek(1)
+        self.assertEqual(timeline.current_index, 2)
+        timeline.seek(2)
+        timeline.seek(1)
+        self.assertEqual(timeline.current_index, 2)
+        self.assertEqual(timeline.step(1, 1), 2)
+        timeline.seek(0)
+        self.assertEqual(timeline.current_time, 1)
+        self.assertEqual(timeline.time_for_frame(0, 1), 1)
+        np.testing.assert_array_equal(timeline.times, [3, 1, 1, 2])
+
+    def test_marked_navigation_and_single_label_mode_follow_sequence(self):
+        session = self.session([1.5, .5, .5, 1, 0])
+        session.annotations.set_point('nose', 1, 0, (1, 2), 'alice')
+        session.annotations.set_point('tail', 0, 1, (3, 4), 'alice')
+        for index in (1, 2, 4):
+            self.assertTrue(session.step_labeled(1))
+            self.assertEqual(session.timeline.current_index, index)
+        self.assertFalse(session.step_labeled(1))
+        self.assertTrue(session.step_labeled(-1))
+        self.assertEqual(session.timeline.current_index, 2)
+        session.single_label_mode = True
+        session.handle_video_action(0, 1, (5, 6), 'create_label')
+        self.assertEqual(session.current_time, 1)
+        self.assertEqual(session.timeline.current_index, 3)
 
     def test_invalid_or_filtered_empty_selection(self):
         for times in ([], [[1]], [np.nan], [np.inf]):
@@ -124,15 +164,16 @@ class LabelingTimesTests(unittest.TestCase):
         self.assertEqual(session.annotations.point('nose', 1, 0), (5, 5))
 
     def test_filter_changes_preserve_selected_times_and_bounds(self):
-        session = self.session([0, .4, .9, 1.7])
+        session = self.session([0, .9, .4, .9, 1.7])
         session.config.update(min_time=.4, max_time=1.7)
         session.timeline = Timeline(session.timeline.camera_times, .4, 1.7,
-                                    labeling_times=[0, .4, .9, 1.7])
-        session.seek(.9)
+                                    labeling_times=[0, .9, .4, .9, 1.7])
+        session.step(2)
         session.reader_factory = lambda *args, **kwargs: FakeReader()
         self.assertTrue(session.set_video_filters(['test-filter', '']))
-        np.testing.assert_array_equal(session.timeline.times, [.4, .9])
+        np.testing.assert_array_equal(session.timeline.times, [.9, .4, .9])
         self.assertEqual(session.current_time, .9)
+        self.assertEqual(session.timeline.current_index, 2)
 
     def test_open_file_selection_resume_and_archive(self):
         (self.root / 'cam.avi').touch()
@@ -148,11 +189,14 @@ class LabelingTimesTests(unittest.TestCase):
 
         session = open_session()
         try:
-            np.testing.assert_array_equal(session.timeline.times, [.4, .9])
+            np.testing.assert_array_equal(session.timeline.times, [.4, .9, .9])
             self.assertEqual(session.current_time, .4)
             self.assertEqual(session.frame_index(0), 1)
             session.step(1)
             self.assertEqual(session.current_time, .9)
+            session.step(1)
+            self.assertEqual(session.current_time, .9)
+            self.assertEqual(session.timeline.current_index, 2)
             processed = session.labels_folder / 'backup' / 'labelgui_cfg_processed.yml'
             self.assertEqual(load_configuration(processed)['labeling_times'], [1.7, .4, 0, .9, .9])
         finally:
@@ -160,6 +204,7 @@ class LabelingTimesTests(unittest.TestCase):
         restored = open_session()
         try:
             self.assertEqual(restored.current_time, .9)
+            self.assertEqual(restored.timeline.current_index, 2)
         finally:
             restored.close()
         times.write_text('[0.4, 1.2]')

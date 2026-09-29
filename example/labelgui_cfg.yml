@@ -27,7 +27,8 @@ max_time: .inf
 # labeling_times: [0.5, 1.25, 3.0]
 # labeling_times: times.yml  # YAML list, e.g. [0.5, 1.25, 3.0].
 # labeling_times: times.txt  # Numbers separated by whitespace or commas; no header.
-# Times are sorted and deduplicated, then filtered by min_time <= t < max_time.
+# Supplied order and duplicates are preserved; min_time <= t < max_time filters entries.
+# With d_time: 0, [3.0, 1.0, 1.0, 2.0] visits those four entries in that order.
 # Each camera displays its nearest frame. An empty effective list is an error.
 labeling_times: null
 # Initial state of View > Trajectories > Only points in allowed time selection.
@@ -36,7 +37,8 @@ trajectory_only_allowed_times: false
 # Initial state of View > Trajectories > Allow clicks outside time selection.
 # Lets a trajectory click visit an excluded frame without changing the selection.
 trajectory_allow_outside_times: false
-# 0: next/previous shared timepoint; >0: step in seconds;
+# 0: next/previous entry in the supplied list (chronological if labeling_times is null);
+# >0: step in seconds;
 # -1: step by camera 0 frames; -2: step by camera 1 frames; etc.
 d_time: 0
 

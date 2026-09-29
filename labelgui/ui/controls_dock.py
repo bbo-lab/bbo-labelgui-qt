@@ -40,7 +40,7 @@ class ControlsDock(QDockWidget):
         time_validator.setDecimals(6)
         self._field(navigation, 0, 'Current time (s)', 'current_time', time_validator)
         step = self._field(navigation, 1, 'Time step', 'd_time', QDoubleValidator(self))
-        step.setToolTip('Positive: step in seconds. Zero: next global timepoint. '
+        step.setToolTip('Positive: step in seconds. Zero: next entry in the time selection. '
                         'Negative: camera-based step (-1 for camera 0, -2 for camera 1, …).')
         self._button(navigation, 2, 0, 'Previous (A)', 'previous_time')
         self._button(navigation, 2, 1, 'Next (D)', 'next_time')

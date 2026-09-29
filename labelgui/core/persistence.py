@@ -63,18 +63,23 @@ class SaveService:
             self._executor.shutdown(wait=True)
 
 
-def load_resume_time(folder):
+def load_resume_state(folder):
     path = Path(folder) / 'exit_status.npy'
     if path.is_file():
         logger.info('Loading resume state: %s', path.resolve())
-        return np.load(path, allow_pickle=True)[()].get('i_time')
-    return None
+        return np.load(path, allow_pickle=True)[()]
+    return {}
 
 
-def save_resume_time(folder, time):
+def load_resume_time(folder):
+    return load_resume_state(folder).get('i_time')
+
+
+def save_resume_time(folder, time, *, time_index=None):
     path = Path(folder) / 'exit_status.npy'
     status = np.load(path, allow_pickle=True)[()] if path.is_file() else {}
     status['i_time'] = time
+    status['time_index'] = time_index
     with TemporaryDirectory(dir=path.parent, prefix='.resume-') as directory:
         temporary = Path(directory) / path.name
         np.save(temporary, status)

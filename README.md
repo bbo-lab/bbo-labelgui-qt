@@ -76,14 +76,23 @@ d_time: 0
 This selects `1.25` and `3.0`: the minimum is inclusive and the maximum exclusive.
 Alternatively, use `labeling_times: times.yml` for a file containing a YAML list,
 or `labeling_times: times.txt` (also `.csv`) for numbers separated by whitespace
-or commas, without a header; `#` comments are accepted. Times are sorted and
-deduplicated. Each camera displays the frame nearest the requested shared time.
+or commas, without a header; `#` comments are accepted. Supplied order and duplicates
+are preserved, including when the time bounds remove entries. Each camera displays
+the frame nearest the requested shared time.
 Omit the option or use `null` to retain all camera timestamps. Empty lists,
 nonfinite times, and selections emptied by the time bounds are rejected.
 
-With `d_time: 0`, next/previous navigation visits adjacent selected times;
-other step modes and manual time entry snap to the nearest selected time.
-Marked-frame navigation stays within the selection. Assisted labeling's
+With `d_time: 0`, next/previous navigation follows the supplied sequence. For example,
+`[3, 1, 1, 2]` visits all four entries, including both occurrences of `1`; previous
+steps traverse them in reverse. Single label mode follows the same sequence.
+Marked-frame navigation also follows it, skipping entries without labels.
+Other step modes retain their time/camera-frame meaning and snap to the nearest
+selected time chronologically. Manual time entry and trajectory selection choose
+the matching occurrence closest to the current sequence position, retaining the
+current occurrence if it already matches. The occurrence is preserved across
+video-filter changes and saved for resume. After an outside-selection visit,
+next/previous first returns to the next/previous allowed time chronologically,
+then follows the sequence again. Assisted labeling's
 **To next** is disabled when the next camera frame cannot be displayed at a
 selected time. Loaded time-list files are logged at INFO, and their values
 are saved in the processed configuration for reproducibility.
