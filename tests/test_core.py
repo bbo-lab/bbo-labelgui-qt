@@ -252,6 +252,29 @@ class PersistenceTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_reference_trajectory_source_metadata_and_navigation_do_not_edit_labels(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            try:
+                session.references = [AnnotationStore(2), AnnotationStore(2)]
+                session.reference_markers = ['o', 's']
+                session.references[0].set_point('tail', 1, 1, (1, 2), 'ref0')
+                session.references[1].set_point('tail', 2, 1, (3, 4), 'ref1')
+                session.timeline = Timeline(session.timeline.camera_times, labeling_times=[.1, 1.1, 1.1])
+                paths = session.trajectories(1, references=True, only_allowed_times=True)
+                self.assertEqual(len(paths), 1)
+                self.assertEqual((paths[0].name, paths[0].reference_index, paths[0].marker), ('tail', 1, 's'))
+                np.testing.assert_array_equal(paths[0].frames, [2])
+                revisions = [store.revision for store in [session.annotations, *session.references]]
+                self.assertFalse(session.select_trajectory_point(1, 'tail', 2, reference_index=0))
+                self.assertFalse(session.select_trajectory_point(1, 'tail', 2, reference_index=2))
+                self.assertTrue(session.select_trajectory_point(1, 'tail', 2, reference_index=1))
+                self.assertEqual((session.current_time, session.current_label), (1.1, 'tail'))
+                self.assertEqual([store.revision for store in [session.annotations, *session.references]], revisions)
+                self.assertIsNone(session.annotations.point('tail', 2, 1))
+            finally:
+                session.close()
+
     def test_trajectory_time_filter_preserves_samples_and_click_eligibility(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)

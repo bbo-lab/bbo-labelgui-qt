@@ -45,7 +45,8 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertTrue(all(cfg['controls']['fields'].values()))
 
     def test_trajectory_options_default_off_and_require_booleans(self):
-        for key in ('trajectory_only_allowed_times', 'trajectory_allow_outside_times'):
+        for key in ('trajectory_only_allowed_times', 'trajectory_allow_outside_times',
+                    'reference_trajectory_only_allowed_times', 'reference_trajectory_allow_outside_times'):
             with self.subTest(key=key):
                 self.assertFalse(load_configuration(self.write_config(self.minimal))[key])
                 self.assertTrue(load_configuration(self.write_config(self.minimal | {key: True}))[key])

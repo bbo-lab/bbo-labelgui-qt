@@ -37,6 +37,9 @@ trajectory_only_allowed_times: false
 # Initial state of View > Trajectories > Allow clicks outside time selection.
 # Lets a trajectory click visit an excluded frame without changing the selection.
 trajectory_allow_outside_times: false
+# Independent defaults for the matching View > Reference trajectories options.
+reference_trajectory_only_allowed_times: false
+reference_trajectory_allow_outside_times: false
 # 0: next/previous entry in the supplied list (chronological if labeling_times is null);
 # >0: step in seconds;
 # -1: step by camera 0 frames; -2: step by camera 1 frames; etc.

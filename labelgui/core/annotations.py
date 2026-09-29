@@ -20,6 +20,8 @@ class Trajectory:
     name: str
     frames: np.ndarray
     coords: np.ndarray
+    reference_index: int | None = None
+    marker: str | None = None
 
 
 @dataclass(frozen=True)

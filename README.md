@@ -200,6 +200,23 @@ are logged at INFO and do not modify the configured selection. Normal
 next/previous navigation returns to the selected times. Disable the trajectory
 time filter above to make excluded points visible and clickable.
 
+**View → Reference trajectories** provides the same Hidden, Active marker,
+All markers, time-filter, and outside-selection options independently for reference
+files. Paths are red, use each file's `reference_labels_marker` symbol, and remain
+separate for each file and marker. They show recorded samples across frames,
+independently of the current-frame **Only Display Annotated** reference filter.
+**Ctrl + left-click** selects the nearest visible reference marker or reference
+trajectory point; selecting a trajectory jumps to its camera frame and marker.
+Current reference markers win ties. This never copies or edits reference points.
+Shift-click continues to select editable labels and their trajectories.
+
+The reference menu's initial time options can be set separately in YAML:
+
+```yaml
+reference_trajectory_only_allowed_times: false
+reference_trajectory_allow_outside_times: false
+```
+
 ## Compiling to exe
 1. `conda activate bbo_labelgui_qt`.
 2. Install pyinstaller: `pip install pyinstaller.

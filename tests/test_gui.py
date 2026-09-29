@@ -880,6 +880,123 @@ class GuiTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
+    def test_reference_trajectory_menu_batches_files_and_filters_independently(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.annotations.set_point('nose', 0, 0, (1, 1), 'alice')
+            session.references = [AnnotationStore(2), AnnotationStore(2)]
+            session.reference_markers = ['o', 's']
+            for frame, coords in ((0, (2, 3)), (2, (4, 5))):
+                session.references[0].set_point('nose', frame, 0, coords, 'ref0')
+            for frame, coords in ((1, (8, 5)), (3, (10, 8))):
+                session.references[1].set_point('nose', frame, 0, coords, 'ref1')
+            session.references[1].set_point('tail', 2, 0, (6, 6), 'ref1')
+            session.timeline = Timeline(session.timeline.camera_times, labeling_times=[0, 1])
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+            item = camera.reference_trajectory_item
+            scene_items = tuple(camera.plot_wget.items())
+            actions = {action.data(): action for action in window.reference_trajectory_actions.actions()}
+            label_actions = {action.data(): action for action in window.trajectory_actions.actions()}
+            try:
+                self.assertTrue(actions['off'].isChecked())
+                self.assertFalse(item.isVisible())
+                actions['all'].trigger()
+                self.assertFalse(camera.trajectory_item.isVisible())
+                self.assertFalse(window.subwindows[1].reference_trajectory_item.isVisible())
+                self.assertEqual([p.data() for p in item.scatter.points()],
+                                 [('nose', 0, 0), ('nose', 2, 0), ('nose', 1, 1), ('nose', 3, 1), ('tail', 2, 1)])
+                self.assertEqual([p.symbol() for p in item.scatter.points()], ['o', 'o', 's', 's', 's'])
+                np.testing.assert_array_equal(item.opts['connect'], [True, False, True, False, False])
+                self.assertEqual(item.opts['pen'].color().getRgb()[:3], (255, 0, 0))
+                window.reference_trajectory_time_filter.setChecked(True)
+                self.assertFalse(window.trajectory_time_filter.isChecked())
+                self.assertEqual([p.data() for p in item.scatter.points()],
+                                 [('nose', 0, 0), ('nose', 2, 0), ('tail', 2, 1)])
+                actions['active'].trigger()
+                window.set_current_label('tail')
+                self.assertEqual([p.data() for p in item.scatter.points()], [('tail', 2, 1)])
+                with patch.object(session.references[1], 'trajectories') as build:
+                    window.set_time(1, mqtt_publish=False)
+                    build.assert_not_called()
+                session.references[1].delete_point('tail', 2, 0, 'ref1')
+                window._render_frame(images=False)
+                self.assertFalse(item.isVisible())
+                window.set_current_label('nose')
+                label_actions['all'].trigger()
+                self.assertTrue(camera.trajectory_item.isVisible())
+                actions['off'].trigger()
+                self.assertTrue(camera.trajectory_item.isVisible())
+                self.assertFalse(item.isVisible())
+                self.assertIs(camera.reference_trajectory_item, item)
+                self.assertEqual(tuple(camera.plot_wget.items()), scene_items)
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_control_click_reference_trajectories_respects_independent_time_options(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder, trajectory_allow_outside_times=True,
+                                   reference_trajectory_only_allowed_times=False,
+                                   reference_trajectory_allow_outside_times=False)
+            session.timeline = Timeline(session.timeline.camera_times, labeling_times=[.1, .6])
+            session.annotations.set_point('nose', 0, 1, (2, 2), 'alice')
+            session.annotations.set_point('nose', 3, 1, (9, 8), 'alice')
+            session.references = [AnnotationStore(2), AnnotationStore(2)]
+            session.references[0].set_point('tail', 1, 1, (7, 5), 'ref0')
+            session.references[0].set_point('tail', 3, 1, (9, 8), 'ref0')
+            session.references[1].set_point('tail', 2, 1, (12, 3), 'ref1')
+            revisions = [store.revision for store in [session.annotations, *session.references]]
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[1]
+            camera.setFloating(True)
+            camera.resize(640, 480)
+            camera.show()
+            for group in (window.trajectory_actions, window.reference_trajectory_actions):
+                next(action for action in group.actions() if action.data() == 'all').trigger()
+            self.app.processEvents()
+
+            def click(x, y, modifier=Qt.KeyboardModifier.ControlModifier):
+                point = camera.plot_wget.mapFromScene(camera.view_box.mapViewToScene(QPointF(x, y)))
+                QTest.mouseClick(camera.plot_wget.viewport(), Qt.MouseButton.LeftButton, modifier, pos=point)
+
+            try:
+                self.assertFalse(window.reference_trajectory_allow_outside.isChecked())
+                self.assertFalse(window.reference_trajectory_time_filter.isChecked())
+                with self.assertLogs('labelgui.core.session', level='INFO') as logs:
+                    click(11.5, 3.5)
+                self.assertIn('reference[1]', logs.output[0])
+                self.assertEqual((session.current_time, session.current_label), (.1, 'nose'))
+                window.reference_trajectory_allow_outside.setChecked(True)
+                with patch.object(window.synchronizer, 'publish') as publish:
+                    click(11.5, 3.5)
+                    publish.assert_called_once_with(1.1)
+                self.assertEqual((session.current_time, session.current_label), (1.1, 'tail'))
+                self.assertEqual(camera.frame_idx, 2)
+                window.reference_trajectory_time_filter.setChecked(True)
+                click(9, 8)  # The nearer excluded samples are hidden.
+                self.assertEqual(session.current_time, .6)
+                window.reference_trajectory_time_filter.setChecked(False)
+                window.reference_trajectory_allow_outside.setChecked(False)
+                window.set_current_label('nose')
+                window.checkbox_disp_ref_annotated.setChecked(False)
+                with patch.object(window.synchronizer, 'publish') as publish:
+                    click(7, 5)  # Current reference marker wins the tie and only selects.
+                    publish.assert_not_called()
+                self.assertEqual((session.current_time, session.current_label), (.6, 'tail'))
+                click(9, 8, Qt.KeyboardModifier.ShiftModifier)
+                self.assertEqual((session.current_time, session.current_label), (1.6, 'nose'))
+                self.assertEqual([store.revision for store in [session.annotations, *session.references]], revisions)
+                click(12, 3, Qt.KeyboardModifier.NoModifier)
+                self.assertEqual(session.current_time, 1.6)
+                self.assertGreater(session.annotations.revision, revisions[0])
+                self.assertEqual([store.revision for store in session.references], revisions[1:])
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_trajectory_menu_selection_batching_and_frame_navigation(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)

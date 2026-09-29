@@ -1,5 +1,5 @@
 """The application session: owns state and use cases, without Qt or plotting."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import inspect
 import logging
 import math
@@ -9,7 +9,7 @@ import numpy as np
 from bbo import path_management
 
 from labelgui import misc
-from .annotations import AnnotationStore, Trajectory, nearest_point
+from .annotations import AnnotationStore, nearest_point
 from .configuration import archive_configuration, load_configuration
 from .diagnostics import format_frame_report
 from .persistence import LabelRepository, SaveService, load_resume_state, save_resume_time
@@ -253,8 +253,14 @@ class LabelingSession:
     def select_sketch_point(self, x, y):
         self.select_label(self.sketch.nearest_label(x, y))
 
-    def trajectories(self, camera, names=None, *, only_allowed_times=False):
-        paths = self.annotations.trajectories(camera, names)
+    def trajectories(self, camera, names=None, *, only_allowed_times=False, references=False):
+        if references:
+            paths = [replace(path, reference_index=index,
+                             marker=self.reference_markers[index] if self.reference_markers is not None else 'x')
+                     for index, store in enumerate(self.references)
+                     for path in store.trajectories(camera, names)]
+        else:
+            paths = self.annotations.trajectories(camera, names)
         if not only_allowed_times:
             return paths
         # Different markers often share frames; check each frame only once.
@@ -264,13 +270,17 @@ class LabelingSession:
         for path in paths:
             mask = np.asarray([allowed[frame] for frame in path.frames], dtype=bool)
             if mask.any():
-                filtered.append(Trajectory(path.name, path.frames[mask], path.coords[mask]))
+                filtered.append(replace(path, frames=path.frames[mask], coords=path.coords[mask]))
         return filtered
 
-    def select_trajectory_point(self, camera, name, frame, *, allow_outside_times=False):
+    def select_trajectory_point(self, camera, name, frame, *, allow_outside_times=False, reference_index=None):
         """Navigate to a stored point, optionally visiting an excluded frame."""
         times = self.timeline.camera_times[camera]
-        if not 0 <= frame < len(times) or self.annotations.point(name, frame, camera) is None:
+        if reference_index is not None and not 0 <= reference_index < len(self.references):
+            return False
+        store = self.annotations if reference_index is None else self.references[reference_index]
+        source = '' if reference_index is None else f'reference[{reference_index}] '
+        if not 0 <= frame < len(times) or store.point(name, frame, camera) is None:
             return False
         time = times[frame]
         target = self.timeline.time_for_frame(camera, frame)
@@ -278,9 +288,9 @@ class LabelingSession:
         if outside:
             target = time
         if target is None:
-            logger.info('Trajectory click ignored: marker %r, camera %d, frame %d, time %.6f s '
+            logger.info('Trajectory click ignored: %smarker %r, camera %d, frame %d, time %.6f s '
                         'is outside the allowed time selection or cannot be displayed there.',
-                        name, camera, frame, time)
+                        source, name, camera, frame, time)
             return False
         sketch = self.current_sketch_index
         if name not in self.sketch.locations:
@@ -290,8 +300,8 @@ class LabelingSession:
         self.current_sketch_index = sketch
         self.current_label = name
         if outside:
-            logger.info('Trajectory click outside the allowed time selection: marker %r, camera %d, '
-                        'frame %d, time %.6f s (override enabled).', name, camera, frame, time)
+            logger.info('Trajectory click outside the allowed time selection: %smarker %r, camera %d, '
+                        'frame %d, time %.6f s (override enabled).', source, name, camera, frame, time)
         self.seek(target, allow_outside_selection=outside)
         return True
 

@@ -26,6 +26,7 @@ class ViewerSubWindow(QDockWidget):
     """A camera view that can be docked, tabbed, or floated onto another screen."""
     mouse_clicked_signal = Signal(float, float, int, int, str)
     trajectory_clicked_signal = Signal(int, str, int)
+    reference_trajectory_clicked_signal = Signal(int, str, int, int)
     marker_selected_signal = Signal(int, str)
     key_pressed_signal = Signal(object)
     marker_params = {
@@ -88,6 +89,14 @@ class ViewerSubWindow(QDockWidget):
         self.trajectory_item.setZValue(2)
         self.trajectory_item.hide()
         self.plot_wget.addItem(self.trajectory_item)
+
+        self.reference_trajectory_item = pg.PlotDataItem(
+            pen=pg.mkPen((255, 0, 0, 130), width=1), symbol='x', symbolSize=4,
+            symbolPen=None, symbolBrush=pg.mkBrush(255, 0, 0, 130),
+        )
+        self.reference_trajectory_item.setZValue(2)
+        self.reference_trajectory_item.hide()
+        self.plot_wget.addItem(self.reference_trajectory_item)
 
         # Contrast options
         bottom_widget = QWidget()
@@ -221,15 +230,18 @@ class ViewerSubWindow(QDockWidget):
         self.view_box.setTransformOriginPoint(local_center)
         self.view_box.setRotation(self.rot_angle)
 
-    def set_trajectories(self, paths):
+    def set_trajectories(self, paths, *, references=False):
         """Batch all paths into one plot, without joining different markers."""
         coords = np.concatenate([path.coords for path in paths]) if paths else np.empty((0, 2))
-        samples = [(path.name, int(frame)) for path in paths for frame in path.frames]
+        samples = [(path.name, int(frame), path.reference_index) if references else (path.name, int(frame))
+                   for path in paths for frame in path.frames]
         connect = np.ones(len(coords), dtype=bool)
         if paths:
             connect[np.cumsum([len(path.coords) for path in paths]) - 1] = False
-        self.trajectory_item.setData(coords[:, 0], coords[:, 1], connect=connect, data=samples)
-        self.trajectory_item.setVisible(bool(len(coords)))
+        item = self.reference_trajectory_item if references else self.trajectory_item
+        symbols = {'symbol': [path.marker or 'x' for path in paths for _ in path.frames]} if references else {}
+        item.setData(coords[:, 0], coords[:, 1], connect=connect, data=samples, **symbols)
+        item.setVisible(bool(len(coords)))
 
     def set_annotations(self, view, current_label=None):
         """Replace a frame's coordinates without adding or removing scene items."""
@@ -277,14 +289,16 @@ class ViewerSubWindow(QDockWidget):
             if any(point.name in (previous, label_name) for point in self.labels[kind]):
                 self._update_markers(kind)
 
-    def select_nearest(self, scene_coords):
+    def select_nearest(self, scene_coords, *, references=False):
         """Select the closest visible label or trajectory sample in screen space."""
         nearest = None
         distance = float('inf')
         # Prefer current labels on ties, then recorded trajectories over guesses.
-        for kind, item in (('label', self.marker_items['label']),
-                           ('trajectory', self.trajectory_item.scatter),
-                           ('guess_label', self.marker_items['guess_label'])):
+        items = ((('ref_label', self.marker_items['ref_label']),
+                  ('reference_trajectory', self.reference_trajectory_item.scatter)) if references else
+                 (('label', self.marker_items['label']), ('trajectory', self.trajectory_item.scatter),
+                  ('guess_label', self.marker_items['guess_label'])))
+        for kind, item in items:
             if not item.isVisible():
                 continue
             x, y = item.getData()
@@ -305,6 +319,9 @@ class ViewerSubWindow(QDockWidget):
         if kind == 'trajectory':
             name, frame = data
             self.trajectory_clicked_signal.emit(self.index, name, frame)
+        elif kind == 'reference_trajectory':
+            name, frame, reference_index = data
+            self.reference_trajectory_clicked_signal.emit(self.index, name, frame, reference_index)
         else:
             self.marker_selected_signal.emit(self.index, data)
 
@@ -340,7 +357,9 @@ class ViewerSubWindow(QDockWidget):
                     self.select_nearest(scene_coords)
                     return
                 elif modifiers == Qt.KeyboardModifier.ControlModifier:
-                    action_str = 'select_ref_label'
+                    event.accept()
+                    self.select_nearest(scene_coords, references=True)
+                    return
                 elif modifiers == Qt.KeyboardModifier.AltModifier:
                     action_str = 'auto_label'
                 else:

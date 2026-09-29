@@ -44,6 +44,8 @@ class MainWindow(QMainWindow):
         self._camera_layout = 'tab_view'
         self.trajectory_mode = 'off'
         self._trajectory_key = None
+        self.reference_trajectory_mode = 'off'
+        self._reference_trajectory_key = None
         self.dock_sketch = SketchDock()
         self.dock_controls = ControlsDock()
         self.synchronizer = TimeSynchronizer(sync, self.mqtt_message_signal.emit)
@@ -82,29 +84,37 @@ class MainWindow(QMainWindow):
         menu.addAction('&Tile', lambda: self.arrange_cameras('tile_view'))
         menu.addAction('&Dock All Cameras', self.dock_all_cameras)
         menu.addAction('Video &Filters...', self.edit_video_filters)
-        trajectories = menu.addMenu('&Trajectories')
-        self.trajectory_actions = QActionGroup(self)
-        self.trajectory_actions.setExclusive(True)
-        for mode, text in (('off', '&Hidden'), ('active', '&Active marker'), ('all', '&All markers')):
-            action = trajectories.addAction(text)
-            action.setCheckable(True)
-            action.setData(mode)
-            action.setChecked(mode == self.trajectory_mode)
-            self.trajectory_actions.addAction(action)
-        self.trajectory_actions.triggered.connect(self._trajectory_mode_changed)
-        trajectories.addSeparator()
-        self.trajectory_time_filter = trajectories.addAction('Only points in allowed time selection')
-        self.trajectory_time_filter.setCheckable(True)
-        self.trajectory_time_filter.setChecked(self.session.config.get('trajectory_only_allowed_times', False))
-        self.trajectory_time_filter.toggled.connect(self._render_trajectories)
-        self.trajectory_allow_outside = trajectories.addAction('Allow clicks outside time selection')
-        self.trajectory_allow_outside.setCheckable(True)
-        self.trajectory_allow_outside.setChecked(self.session.config.get('trajectory_allow_outside_times', False))
+        (self.trajectory_actions, self.trajectory_time_filter,
+         self.trajectory_allow_outside) = self._trajectory_menu(menu, '&Trajectories')
+        (self.reference_trajectory_actions, self.reference_trajectory_time_filter,
+         self.reference_trajectory_allow_outside) = self._trajectory_menu(menu, 'Reference trajectories', reference=True)
         menu.addSection('Reference labels')
         self.checkbox_disp_ref_annotated = menu.addAction('&Only Display Annotated')
         self.checkbox_disp_ref_annotated.setCheckable(True)
         self.checkbox_disp_ref_annotated.setChecked(self.session.only_annotated_references)
         self.checkbox_disp_ref_annotated.toggled.connect(self._reference_filter_changed)
+
+    def _trajectory_menu(self, menu, title, *, reference=False):
+        trajectories = menu.addMenu(title)
+        prefix = 'reference_' if reference else ''
+        actions = QActionGroup(self)
+        actions.setExclusive(True)
+        for mode, text in (('off', '&Hidden'), ('active', '&Active marker'), ('all', '&All markers')):
+            action = trajectories.addAction(text)
+            action.setCheckable(True)
+            action.setData(mode)
+            action.setChecked(mode == 'off')
+            actions.addAction(action)
+        actions.triggered.connect(lambda action: self._trajectory_mode_changed(action, reference=reference))
+        trajectories.addSeparator()
+        time_filter = trajectories.addAction('Only points in allowed time selection')
+        time_filter.setCheckable(True)
+        time_filter.setChecked(self.session.config.get(f'{prefix}trajectory_only_allowed_times', False))
+        time_filter.toggled.connect(self._render_trajectories)
+        allow_outside = trajectories.addAction('Allow clicks outside time selection')
+        allow_outside.setCheckable(True)
+        allow_outside.setChecked(self.session.config.get(f'{prefix}trajectory_allow_outside_times', False))
+        return actions, time_filter, allow_outside
 
     def _build_viewers(self):
         for index, camera in enumerate(self.session.cameras):
@@ -114,6 +124,7 @@ class MainWindow(QMainWindow):
                 window.connect_controls()
                 window.mouse_clicked_signal.connect(self.viewer_click)
                 window.trajectory_clicked_signal.connect(self.trajectory_click)
+                window.reference_trajectory_clicked_signal.connect(self.trajectory_click)
                 window.marker_selected_signal.connect(self.viewer_select_label)
                 window.view_box.mouse_wheel_signal.connect(
                     lambda delta, camera=index: self.viewer_wheel_event(delta, camera))
@@ -207,24 +218,29 @@ class MainWindow(QMainWindow):
         self._render_trajectories()
         self._update_tracking_controls()
 
-    def _trajectory_mode_changed(self, action):
-        self.trajectory_mode = action.data()
+    def _trajectory_mode_changed(self, action, *, reference=False):
+        setattr(self, 'reference_trajectory_mode' if reference else 'trajectory_mode', action.data())
         self._render_trajectories()
 
     def _render_trajectories(self):
-        annotations = self.session.annotations
-        name = self.session.current_label if self.trajectory_mode == 'active' else None
-        only_allowed = self.trajectory_time_filter.isChecked()
-        key = (annotations.revision, self.trajectory_mode, name, only_allowed, self.session.timeline)
-        if key == self._trajectory_key:
-            return
-        for camera, window in self.subwindows.items():
-            if self.trajectory_mode == 'off':
-                window.trajectory_item.hide()
-            else:
-                names = (name,) if self.trajectory_mode == 'active' else None
-                window.set_trajectories(self.session.trajectories(camera, names, only_allowed_times=only_allowed))
-        self._trajectory_key = key
+        for reference in (False, True):
+            prefix = 'reference_' if reference else ''
+            mode = getattr(self, f'{prefix}trajectory_mode')
+            name = self.session.current_label if mode == 'active' else None
+            only_allowed = getattr(self, f'{prefix}trajectory_time_filter').isChecked()
+            stores = self.session.references if reference else [self.session.annotations]
+            key = (tuple((store, store.revision) for store in stores), mode, name, only_allowed,
+                   self.session.timeline, tuple(self.session.reference_markers or ()) if reference else ())
+            if key == getattr(self, f'_{prefix}trajectory_key'):
+                continue
+            for camera, window in self.subwindows.items():
+                if mode == 'off':
+                    getattr(window, f'{prefix}trajectory_item').hide()
+                else:
+                    names = (name,) if mode == 'active' else None
+                    window.set_trajectories(self.session.trajectories(
+                        camera, names, only_allowed_times=only_allowed, references=reference), references=reference)
+            setattr(self, f'_{prefix}trajectory_key', key)
 
     def _render_frame(self, images=True):
         for camera, window in self.subwindows.items():
@@ -264,11 +280,14 @@ class MainWindow(QMainWindow):
         self._set_active_camera(camera)
         self.set_current_label(name)
 
-    def trajectory_click(self, camera, name, frame):
+    def trajectory_click(self, camera, name, frame, reference_index=None):
         previous_time = self.session.current_time
         previous_sketch = self.session.current_sketch_index
+        allow_outside = (self.trajectory_allow_outside if reference_index is None
+                         else self.reference_trajectory_allow_outside)
         if not self.session.select_trajectory_point(camera, name, frame,
-                                                    allow_outside_times=self.trajectory_allow_outside.isChecked()):
+                                                    allow_outside_times=allow_outside.isChecked(),
+                                                    reference_index=reference_index):
             return
         self._set_active_camera(camera)
         if previous_sketch != self.session.current_sketch_index:
