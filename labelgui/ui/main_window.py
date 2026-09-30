@@ -80,7 +80,12 @@ class MainWindow(QMainWindow):
         self.setFocus()
 
     def _build_menus(self):
-        self.menuBar().addMenu('&File').addAction('Save Labels As...', self.save_labels_as)
+        file_menu = self.menuBar().addMenu('&File')
+        file_menu.addAction('Save Labels As...', self.save_labels_as)
+        self.auto_save_action = file_menu.addAction('&Auto Save')
+        self.auto_save_action.setCheckable(True)
+        self.auto_save_action.setChecked(self.session.config.get('auto_save', False))
+        self.auto_save_action.toggled.connect(self._auto_save_changed)
         menu = self.menuBar().addMenu('&View')
         menu.addAction('&Tab (single cam view)', lambda: self.arrange_cameras('tab_view'))
         menu.addAction('&Tile', lambda: self.arrange_cameras('tile_view'))
@@ -254,6 +259,9 @@ class MainWindow(QMainWindow):
             window.set_annotations(view, self.session.current_label)
         self.dock_controls.widgets['fields']['current_time'].setText(str(round(self.session.current_time, 6)))
         self._render_selection()
+
+    def _auto_save_changed(self, checked):
+        self.session.config['auto_save'] = checked
 
     def _reference_filter_changed(self, checked):
         self.session.only_annotated_references = checked
