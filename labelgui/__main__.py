@@ -15,8 +15,14 @@ def main():
     parser.add_argument('--yml_only', action='store_true', help='Only write YAML label files')
     parser.add_argument('--sync', nargs='?', const=False, default='bbo/sync/t',
                         help='MQTT topic; pass --sync without a topic to disable synchronization')
+    parser.add_argument('--preload', type=int, default=None,
+                        help='Number of video frames to preload (default: reader setting; 0 disables preloading)')
+    parser.add_argument('--backend', default='iio',
+                        help='Video reader backend (default: iio)')
     parser.add_argument('-log', '--loglevel', default='info')
     args = parser.parse_args()
+    if args.preload is not None and args.preload < 0:
+        parser.error('--preload must be non-negative')
     logging.basicConfig(level=args.loglevel.upper())
     path = Path(args.INPUT_PATH).expanduser()
     if args.merge is not None:
@@ -30,7 +36,7 @@ def main():
         from labelgui.ui import MainWindow
         app = QApplication([])
         try:
-            gui = MainWindow(path, sync=args.sync)
+            gui = MainWindow(path, sync=args.sync, preload=args.preload, backend=args.backend)
         except (ValueError, OSError) as error:
             logging.getLogger(__name__).error('Could not open labeling session: %s', error)
             raise SystemExit(1) from error

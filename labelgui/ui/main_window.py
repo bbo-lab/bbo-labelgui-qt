@@ -1,4 +1,5 @@
 """Qt presentation and event bindings for a headless LabelingSession."""
+from functools import partial
 import logging
 import math
 from pathlib import Path
@@ -8,7 +9,7 @@ from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
 
 from labelgui.core.configuration import job_config_path
-from labelgui.core.session import LabelingSession
+from labelgui.core.session import LabelingSession, open_reader
 from labelgui.core.synchronization import TimeSynchronizer
 from labelgui.select_user import SelectUserWindow
 from .controls_dock import ControlsDock
@@ -23,7 +24,7 @@ class MainWindow(QMainWindow):
     mqtt_message_signal = Signal(float)
 
     def __init__(self, drive: Path = None, file_config=None, parent=None,
-                 sync: str | bool = False, *, session=None):
+                 sync: str | bool = False, *, session=None, preload=None, backend='iio'):
         super().__init__(parent)
         if session is None:
             if drive is None or not Path(drive).is_dir():
@@ -32,7 +33,8 @@ class MainWindow(QMainWindow):
             if not accepted:
                 raise SystemExit(0)
             config_path = Path(file_config) if file_config else job_config_path(drive, user, job)
-            session = LabelingSession.open(drive, user, config_path)
+            reader_factory = partial(open_reader, preload=preload, backend=backend)
+            session = LabelingSession.open(drive, user, config_path, reader_factory=reader_factory)
         self.session = session
         self.subwindows = {}
         self.active_camera = None

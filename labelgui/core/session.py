@@ -75,11 +75,15 @@ class Camera:
                 logger.exception('Could not close video reader %s', self.path)
 
 
-def open_reader(path):
+def open_reader(path, preload=None, backend="iio"):
     import svidreader
     from svidreader.filtergraph import create_filtergraph_from_string
+    from svidreader.imagecache import ImageCache
+    if preload is None:
+        preload = 50
     filename, _, filter_string = str(path).partition('|')
-    reader = svidreader.get_reader(filename, backend='iio', cache=True)
+    reader = svidreader.get_reader(filename, backend=backend, cache=False)
+    reader = ImageCache(reader, maxcount=max(preload * 2, 100), preload=preload)
     if not filter_string:
         return reader
     try:
@@ -94,8 +98,11 @@ def camera_timestamps(reader, metadata, settings):
         import pandas as pd
         logger.info('Loading camera timestamps: %s', Path(settings['file']).expanduser().resolve())
         times = pd.read_csv(settings['file'], comment='#').iloc[:, 0].to_numpy(dtype=float)
-        if len(times) != len(reader):
-            raise ValueError("Timestamp count does not match recording frame count")
+        if len(times) > len(reader):
+            logger.log(logging.WARN, "Timestamp count larger than recording frame count")
+            times = times[:len(reader)]
+        elif len(times) < len(reader):
+            raise ValueError("Timestamp count smaller than recording frame count")
     else:
         fps = float(settings.get('fps', metadata.get('fps', 0)))
         if not math.isfinite(fps) or fps <= 0:

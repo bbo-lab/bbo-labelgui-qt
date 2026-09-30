@@ -17,7 +17,15 @@ deleted points are excluded; unavailable metadata is shown as `-`. Use
 ### Labeling mode
 Run with `python -m labelgui [base data directory]`.
 This starts a GUI in drone mode, for the use by assistants with limited options to influence how the program runs 
-and where it saves. This expects the following file structure:
+and where it saves. Set video reader options at startup with `--preload` and `--backend`:
+
+```sh
+python -m labelgui /path/to/data --preload 100 --backend iio
+```
+
+`--preload` accepts a non-negative frame count; `0` disables preloading. If omitted,
+the reader's default is used. `--backend` defaults to `iio`. Both settings also apply
+when video filters are changed. This expects the following file structure:
 ```
 [base data directory]/
 ├── data/
