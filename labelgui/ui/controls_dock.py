@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QLocale, Qt
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (QWidget, QGridLayout, QVBoxLayout, QLabel, QLineEdit,
                                QPushButton, QDockWidget, QGroupBox, QSizePolicy,
@@ -37,8 +37,9 @@ class ControlsDock(QDockWidget):
 
         navigation = self._group(sections, 'Navigation')
         time_validator = QDoubleValidator(self)
+        time_validator.setLocale(QLocale.c())
         time_validator.setDecimals(6)
-        self._field(navigation, 0, 'Current time (s)', 'current_time', time_validator)
+        self._field(navigation, 0, 'Current time', 'current_time', time_validator)
         step = self._field(navigation, 1, 'Time step', 'd_time', QDoubleValidator(self))
         step.setToolTip('Positive: step in seconds. Zero: next entry in the time selection. '
                         'Negative: camera-based step (-1 for camera 0, -2 for camera 1, …).')
