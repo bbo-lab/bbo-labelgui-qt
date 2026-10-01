@@ -80,7 +80,7 @@ def open_reader(path, preload=None, backend="iio"):
     from svidreader.filtergraph import create_filtergraph_from_string
     from svidreader.imagecache import ImageCache
     if preload is None:
-        preload = 50
+        preload = 5
     filename, _, filter_string = str(path).partition('|')
     reader = svidreader.get_reader(filename, backend=backend, cache=False)
     reader = ImageCache(reader, maxcount=max(preload * 2, 100), preload=preload)
