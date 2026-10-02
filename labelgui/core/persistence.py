@@ -27,6 +27,7 @@ class LabelRepository:
                 source = temporary.with_suffix(suffix)
                 if source.exists():
                     os.replace(source, path.with_suffix(suffix))
+        logger.info('Saved labels: %s', path.resolve())
 
 
 class SaveService:
