@@ -93,7 +93,31 @@ class AnnotationStore:
                 for frame, entry in frames.items()
                 if np.all(np.isfinite(entry['coords'][camera]))}
 
-    def trajectories(self, camera, names=None):
+    def labeler(self, name, frame, camera):
+        """Return the point's author, or None when author metadata is missing."""
+        entry = self.data['labels'].get(name, {}).get(frame, {})
+        indices = entry.get('labeler', ())
+        users = self.data.get('labeler_list', ())
+        if camera < len(indices):
+            index = indices[camera]
+            if np.isfinite(index) and index == int(index) and 0 <= index < len(users):
+                return users[int(index)]
+        return None
+
+    def labelers(self):
+        """Authors of recorded points across all frames and cameras."""
+        return {self.labeler(name, frame, camera)
+                for name, frames in self.data['labels'].items()
+                for frame, entry in frames.items()
+                for camera in range(self.camera_count)
+                if np.all(np.isfinite(entry['coords'][camera]))}
+
+    def _visible_point(self, name, frame, camera, hidden_labelers):
+        if hidden_labelers and self.labeler(name, frame, camera) in hidden_labelers:
+            return None
+        return self.point(name, frame, camera)
+
+    def trajectories(self, camera, names=None, *, hidden_labelers=()):
         """Recorded positions and camera frame indices, one trajectory per marker.
 
         Sparse annotations are connected across frame gaps; guesses and missing
@@ -107,41 +131,51 @@ class AnnotationStore:
             coords = np.asarray([frames[frame]['coords'][camera] for frame in indices],
                                 dtype=float).reshape(-1, 2)
             valid = np.isfinite(coords).all(axis=1)
+            if hidden_labelers:
+                valid &= np.asarray([self.labeler(name, frame, camera) not in hidden_labelers
+                                     for frame in indices], dtype=bool)
             if valid.any():
                 paths.append(Trajectory(name, indices[valid], coords[valid]))
         return paths
 
-    def guess(self, name, frame, camera):
+    def guess(self, name, frame, camera, *, hidden_labelers=()):
         for offset in range(1, 4):
-            before = self.point(name, frame - offset, camera)
-            after = self.point(name, frame + offset, camera)
+            before = self._visible_point(name, frame - offset, camera, hidden_labelers)
+            after = self._visible_point(name, frame + offset, camera, hidden_labelers)
             if before is not None and after is not None:
                 return tuple((np.asarray(before) + after) / 2)
         for offset in (-1, 1, -2, 2, -3, 3):
-            point = self.point(name, frame + offset, camera)
+            point = self._visible_point(name, frame + offset, camera, hidden_labelers)
             if point is not None:
                 return point
         return None
 
-    def points(self, frame, camera, include_guesses=True):
+    def points(self, frame, camera, include_guesses=True, *, hidden_labelers=()):
         points = []
         for name in self.data['labels']:
             coords = self.point(name, frame, camera)
             kind = 'label'
+            if coords is not None and hidden_labelers and self.labeler(name, frame, camera) in hidden_labelers:
+                continue
             if coords is None and include_guesses:
-                coords = self.guess(name, frame, camera)
+                coords = self.guess(name, frame, camera, hidden_labelers=hidden_labelers)
                 kind = 'guess_label'
             if coords is not None:
                 points.append(Point(name, coords, kind))
         return tuple(points)
 
-    def frame_annotations(self, frame, camera, references, only_annotated=True, *, reference_markers=None):
+    def frame_annotations(self, frame, camera, references, only_annotated=True, *, reference_markers=None,
+                          hidden_labelers=(), hidden_reference_labelers=()):
         # Preserve the reference filter: annotated in any camera at this frame.
         names = label_lib.get_labels_from_frame(self.data, frame) if only_annotated else None
         refs = tuple(Point(p.name, p.coords, 'ref_label',
                            reference_markers[index] if reference_markers is not None else 'x', index)
                      for index, reference in enumerate(references)
-                     for p in reference.points(frame, camera, include_guesses=False)
+                     for p in reference.points(frame, camera, include_guesses=False,
+                                               hidden_labelers=hidden_reference_labelers)
                      if names is None or p.name in names)
-        return FrameAnnotations(self.points(frame, camera), refs,
-                                tuple(label_lib.get_frame_labelers(self.data, frame, cam_idx=camera)))
+        points = self.points(frame, camera, hidden_labelers=hidden_labelers)
+        users = {self.labeler(point.name, frame, camera) for point in points if point.kind == 'label'}
+        labelers = tuple(sorted(user if user is not None else 'Unknown labeler'
+                                for user in users if user != '_unmarked'))
+        return FrameAnnotations(points, refs, labelers)

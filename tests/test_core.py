@@ -130,6 +130,45 @@ class TimelineTests(unittest.TestCase):
 
 
 class AnnotationTests(unittest.TestCase):
+    def test_labeler_filters_use_camera_metadata_for_points_guesses_and_trajectories(self):
+        store = AnnotationStore(2)
+        store.set_point('nose', 0, 0, (0, 2), 'alice')
+        store.set_point('nose', 0, 1, (10, 12), 'bob')
+        store.set_point('nose', 2, 0, (4, 6), 'bob')
+        revision = store.revision
+        self.assertEqual(store.labelers(), {'alice', 'bob'})
+        self.assertEqual(store.points(0, 0, hidden_labelers={'alice'}), ())
+        self.assertEqual(store.points(0, 1, hidden_labelers={'alice'})[0].coords, (10, 12))
+        self.assertEqual(store.guess('nose', 1, 0), (2, 4))
+        self.assertEqual(store.guess('nose', 1, 0, hidden_labelers={'alice'}), (4, 6))
+        self.assertEqual(store.points(1, 0, hidden_labelers={'alice', 'bob'}), ())
+        paths = store.trajectories(0, hidden_labelers={'alice'})
+        np.testing.assert_array_equal(paths[0].frames, [2])
+        np.testing.assert_array_equal(paths[0].coords, [[4, 6]])
+        self.assertEqual(store.revision, revision)
+        self.assertEqual(store.point('nose', 0, 0), (0, 2))
+
+    def test_reference_labeler_filters_span_files_and_handle_missing_metadata(self):
+        store, first, second, unknown = [AnnotationStore(1) for _ in range(4)]
+        store.set_point('nose', 0, 0, (1, 2), 'alice')
+        first.set_point('nose', 0, 0, (3, 4), 'alice')
+        second.set_point('tail', 0, 0, (5, 6), 'bob')
+        second.set_point('nose', 0, 0, (7, 8), 'alice')
+        unknown.set_point('nose', 0, 0, (9, 10), 'old')
+        unknown.data['labels']['nose'][0].pop('labeler')
+        self.assertEqual(unknown.labelers(), {None})
+        self.assertEqual(unknown.frame_annotations(0, 0, []).labelers, ('Unknown labeler',))
+        self.assertEqual(unknown.frame_annotations(0, 0, [], hidden_labelers={None}).points, ())
+        references = [first, second, unknown]
+        view = store.frame_annotations(0, 0, references, False, hidden_reference_labelers={'alice'})
+        self.assertEqual([(p.name, p.reference_index) for p in view.references], [('tail', 1), ('nose', 2)])
+        self.assertEqual(view.labelers, ('alice',))
+        view = store.frame_annotations(0, 0, references, False, hidden_labelers={'alice'},
+                                       hidden_reference_labelers={'alice', None})
+        self.assertEqual(view.points, ())
+        self.assertEqual(view.labelers, ())
+        self.assertEqual([(p.name, p.reference_index) for p in view.references], [('tail', 1)])
+
     def test_trajectories_use_recorded_positions_in_camera_frame_order(self):
         store = AnnotationStore(2)
         self.assertEqual(store.trajectories(0), [])

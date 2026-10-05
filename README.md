@@ -48,6 +48,11 @@ When both extensions exist for the same job, `.yml` takes precedence.
 Marking results will be placed in `[base data directory]/user/[user]/[dataset]/`.
 
 ### Others
+Use **View → Label labelers** or **View → Reference labelers** to uncheck authors
+whose points you want to hide. The reference selection applies to all reference
+files. These filters also affect trajectories and guessed labels; everyone is
+shown by default. Points without author metadata appear under **Unknown labeler**.
+
 To manipulate i.e. merge, add labels files, see `--help` for available options. 
 
 ## Job configuration

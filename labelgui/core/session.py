@@ -137,6 +137,8 @@ class LabelingSession:
         self.d_time = float(config['d_time'])
         self.single_label_mode = False
         self.only_annotated_references = True
+        self.hidden_labelers = set()
+        self.hidden_reference_labelers = set()
         self.search_radius = 10
         self.pixel_metric = brightness
         self._autosave_counter = 0
@@ -241,7 +243,9 @@ class LabelingSession:
     def frame_annotations(self, camera):
         return self.annotations.frame_annotations(self.frame_index(camera), camera, self.references,
                                                   self.only_annotated_references,
-                                                  reference_markers=self.reference_markers)
+                                                  reference_markers=self.reference_markers,
+                                                  hidden_labelers=self.hidden_labelers,
+                                                  hidden_reference_labelers=self.hidden_reference_labelers)
 
     def select_label(self, name):
         if name not in self.sketch.locations:
@@ -265,9 +269,10 @@ class LabelingSession:
             paths = [replace(path, reference_index=index,
                              marker=self.reference_markers[index] if self.reference_markers is not None else 'x')
                      for index, store in enumerate(self.references)
-                     for path in store.trajectories(camera, names)]
+                     for path in store.trajectories(camera, names,
+                                                    hidden_labelers=self.hidden_reference_labelers)]
         else:
-            paths = self.annotations.trajectories(camera, names)
+            paths = self.annotations.trajectories(camera, names, hidden_labelers=self.hidden_labelers)
         if not only_allowed_times:
             return paths
         # Different markers often share frames; check each frame only once.

@@ -4,7 +4,7 @@ import logging
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QSignalBlocker, QTimer
 from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
 
@@ -91,6 +91,8 @@ class MainWindow(QMainWindow):
         menu.addAction('&Tile', lambda: self.arrange_cameras('tile_view'))
         menu.addAction('&Dock All Cameras', self.dock_all_cameras)
         menu.addAction('Video &Filters...', self.edit_video_filters)
+        self.labeler_menu = self._labeler_menu(menu, 'Label labelers')
+        self.reference_labeler_menu = self._labeler_menu(menu, 'Reference labelers', reference=True)
         (self.trajectory_actions, self.trajectory_time_filter,
          self.trajectory_allow_outside) = self._trajectory_menu(menu, '&Trajectories')
         (self.reference_trajectory_actions, self.reference_trajectory_time_filter,
@@ -100,6 +102,52 @@ class MainWindow(QMainWindow):
         self.checkbox_disp_ref_annotated.setCheckable(True)
         self.checkbox_disp_ref_annotated.setChecked(self.session.only_annotated_references)
         self.checkbox_disp_ref_annotated.toggled.connect(self._reference_filter_changed)
+
+    def _labeler_menu(self, menu, title, *, reference=False):
+        selection = menu.addMenu(title)
+        self._populate_labeler_menu(selection, reference=reference)
+        selection.aboutToShow.connect(lambda: self._populate_labeler_menu(selection, reference=reference))
+        return selection
+
+    def _populate_labeler_menu(self, menu, *, reference=False):
+        menu.clear()
+        stores = self.session.references if reference else [self.session.annotations]
+        users = set().union(*(store.labelers() for store in stores))
+        hidden = self.session.hidden_reference_labelers if reference else self.session.hidden_labelers
+        users.update(hidden)
+        if not reference:
+            users.add(self.session.user)
+        menu.addAction('Check all', lambda: self._set_all_labelers(menu, True, reference=reference)).setEnabled(bool(users))
+        menu.addAction('Uncheck all', lambda: self._set_all_labelers(menu, False, reference=reference)).setEnabled(bool(users))
+        menu.addSeparator()
+        if not users:
+            menu.addAction('No labelers').setEnabled(False)
+        for user in sorted(users, key=lambda name: (name is None, name or '')):
+            action = menu.addAction(user if user is not None else 'Unknown labeler')
+            action.setData(user)
+            action.setCheckable(True)
+            action.setChecked(user not in hidden)
+            action.toggled.connect(lambda checked, user=user: self._labeler_filter_changed(
+                user, checked, reference=reference))
+
+    def _set_all_labelers(self, menu, checked, *, reference=False):
+        hidden = self.session.hidden_reference_labelers if reference else self.session.hidden_labelers
+        hidden.clear()
+        for action in menu.actions():
+            if action.isCheckable():
+                if not checked:
+                    hidden.add(action.data())
+                with QSignalBlocker(action):
+                    action.setChecked(checked)
+        self._render_frame(images=False)
+
+    def _labeler_filter_changed(self, user, checked, *, reference=False):
+        hidden = self.session.hidden_reference_labelers if reference else self.session.hidden_labelers
+        if checked:
+            hidden.discard(user)
+        else:
+            hidden.add(user)
+        self._render_frame(images=False)
 
     def _trajectory_menu(self, menu, title, *, reference=False):
         trajectories = menu.addMenu(title)
@@ -236,8 +284,10 @@ class MainWindow(QMainWindow):
             name = self.session.current_label if mode == 'active' else None
             only_allowed = getattr(self, f'{prefix}trajectory_time_filter').isChecked()
             stores = self.session.references if reference else [self.session.annotations]
+            hidden = self.session.hidden_reference_labelers if reference else self.session.hidden_labelers
             key = (tuple((store, store.revision) for store in stores), mode, name, only_allowed,
-                   self.session.timeline, tuple(self.session.reference_markers or ()) if reference else ())
+                   self.session.timeline, tuple(self.session.reference_markers or ()) if reference else (),
+                   frozenset(hidden))
             if key == getattr(self, f'_{prefix}trajectory_key'):
                 continue
             for camera, window in self.subwindows.items():

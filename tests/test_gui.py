@@ -28,6 +28,91 @@ class GuiTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_labeler_menus_filter_points_and_trajectories_across_reference_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = make_session(folder)
+            session.only_annotated_references = False
+            session.annotations.set_point('nose', 0, 0, (1, 2), 'alice')
+            session.annotations.set_point('nose', 0, 1, (3, 4), 'bob')
+            session.annotations.set_point('nose', 2, 0, (5, 6), 'bob')
+            session.annotations.set_point('tail', 0, 0, (7, 8), 'bob')
+            session.references = [AnnotationStore(2), AnnotationStore(2)]
+            session.references[0].set_point('nose', 0, 0, (9, 10), 'alice')
+            session.references[0].set_point('tail', 0, 0, (11, 12), 'bob')
+            session.references[1].set_point('tail', 1, 0, (13, 14), 'carol')
+            session.references[1].set_point('nose', 0, 0, (15, 16), 'alice')
+            window = MainWindow(session=session, sync=False)
+            camera = window.subwindows[0]
+            scene_items = tuple(camera.plot_wget.items())
+            revisions = [store.revision for store in [session.annotations, *session.references]]
+            try:
+                labels = {action.data(): action for action in window.labeler_menu.actions() if action.isCheckable()}
+                refs = {action.data(): action for action in window.reference_labeler_menu.actions() if action.isCheckable()}
+                self.assertEqual(set(labels), {'alice', 'bob'})
+                self.assertEqual(set(refs), {'alice', 'bob', 'carol'})
+                self.assertTrue(all(action.isChecked() for action in [*labels.values(), *refs.values()]))
+                for group in (window.trajectory_actions, window.reference_trajectory_actions):
+                    next(action for action in group.actions() if action.data() == 'all').trigger()
+                with patch.object(camera, 'redraw_frame') as redraw:
+                    labels['alice'].setChecked(False)
+                    redraw.assert_not_called()
+                self.assertEqual([p.name for p in camera.labels['label']], ['tail'])
+                self.assertEqual(camera.label_labeler.text(), 'bob')
+                self.assertEqual([p.name for p in window.subwindows[1].labels['label']], ['nose'])
+                self.assertEqual(len(camera.labels['ref_label']), 3)
+                self.assertEqual([p.data() for p in camera.trajectory_item.scatter.points()],
+                                 [('nose', 2), ('tail', 0)])
+                refs['alice'].setChecked(False)
+                self.assertEqual([(p.name, p.reference_index) for p in camera.labels['ref_label']], [('tail', 0)])
+                self.assertEqual([p.data() for p in camera.reference_trajectory_item.scatter.points()],
+                                 [('tail', 0, 0), ('tail', 1, 1)])
+                refs['bob'].setChecked(False)
+                self.assertFalse(camera.marker_items['ref_label'].isVisible())
+                labels['alice'].setChecked(True)
+                refs['alice'].setChecked(True)
+                self.assertEqual([p.name for p in camera.labels['label']], ['nose', 'tail'])
+                self.assertEqual(len(camera.labels['ref_label']), 2)
+                window.reference_labeler_menu.aboutToShow.emit()
+                refs = {action.data(): action for action in window.reference_labeler_menu.actions() if action.isCheckable()}
+                self.assertFalse(refs['bob'].isChecked())
+                session.annotations.set_point('tail', 1, 0, (17, 18), 'new author')
+                window.labeler_menu.aboutToShow.emit()
+                self.assertIn('new author', {action.data() for action in window.labeler_menu.actions() if action.isCheckable()})
+                for menu, hidden in ((window.labeler_menu, session.hidden_labelers),
+                                     (window.reference_labeler_menu, session.hidden_reference_labelers)):
+                    bulk = {action.text(): action for action in menu.actions() if not action.isCheckable()}
+                    with patch.object(window, '_render_frame', wraps=window._render_frame) as render:
+                        bulk['Uncheck all'].trigger()
+                        render.assert_called_once_with(images=False)
+                    self.assertTrue(all(not action.isChecked() for action in menu.actions() if action.isCheckable()))
+                    self.assertTrue(hidden)
+                    if menu is window.labeler_menu:
+                        self.assertFalse(camera.labels['label'])
+                        self.assertFalse(camera.trajectory_item.isVisible())
+                        self.assertEqual(len(camera.labels['ref_label']), 2)
+                    else:
+                        self.assertFalse(camera.labels['ref_label'])
+                        self.assertFalse(camera.reference_trajectory_item.isVisible())
+                        self.assertEqual(len(camera.labels['label']), 2)
+                    with patch.object(window, '_render_frame', wraps=window._render_frame) as render:
+                        bulk['Check all'].trigger()
+                        render.assert_called_once_with(images=False)
+                    self.assertTrue(all(action.isChecked() for action in menu.actions() if action.isCheckable()))
+                    self.assertFalse(hidden)
+                self.assertEqual(len(camera.labels['label']), 2)
+                self.assertEqual(len(camera.labels['ref_label']), 3)
+                self.assertEqual(tuple(camera.plot_wget.items()), scene_items)
+                self.assertEqual([store.revision for store in session.references], revisions[1:])
+                self.assertEqual(session.annotations.point('nose', 0, 0), (1, 2))
+                session.save(force=True).result()
+                from labelgui.core.persistence import LabelRepository
+                saved = LabelRepository().load(Path(folder) / 'labels.yml')
+                np.testing.assert_array_equal(saved['labels']['nose'][0]['coords'][0], [1, 2])
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_alt_click_and_to_next_share_radius_and_camera_selection(self):
         with tempfile.TemporaryDirectory() as folder:
             session = make_session(folder)
