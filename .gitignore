@@ -13,4 +13,4 @@
 # Pyinstaller
 build/
 dist/
-*.spec
+*.spec!packaging/labelgui.spec

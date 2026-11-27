@@ -1,0 +1,142 @@
+# Builds the labelgui application for Windows, macOS and Linux on every tag and attaches
+# the archives to the tag's GitHub release. Run it manually (Actions → Build application)
+# to build without a release: the archives are then kept as workflow artifacts for 7 days
+# (they count against the account's Actions storage quota; release files do not). Give
+# the manual run a tag to build that tag with this workflow and attach to its release.
+#
+# One job creates the release before the builds start, so the three builds never race to
+# create it; each build then uploads its archive, retrying GitHub's occasional upload errors
+# ("Error creating policy") and replacing an archive of the same name.
+#
+# CairoSVG (SVG sketches) needs the native cairo library, which pip does not install: the
+# builds take it from apt, Homebrew or MSYS2, and PyInstaller bundles it. The smoke test runs
+# without those locations on the search path, so it checks the bundled copy.
+name: Build application
+
+on:
+  push:
+    tags: ["*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach to its release (empty: no release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Only for a release: a pushed tag, or a manual run given a tag.
+    if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
+    steps:
+      - name: Create the release unless it exists
+        run: |
+          gh release view "$RELEASE_TAG" > /dev/null 2>&1 \
+            || gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes ""
+
+  build:
+    needs: release
+    # Also without a release (the release job is then skipped), but not after it failed.
+    if: ${{ !cancelled() && needs.release.result != 'failure' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+            extension: zip
+          - os: macos-latest
+            platform: macos-arm64
+            extension: zip
+          - os: ubuntu-22.04  # The oldest glibc that the bundle then supports.
+            platform: linux-x86_64
+            extension: tar.gz  # Keeps the Qt library symlinks, which many unzip tools break.
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The release's tag: the pushed tag, or the manual run's tag input; empty: no release.
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
+      ARCHIVE: labelgui-${{ inputs.tag || github.ref_name }}-${{ matrix.platform }}.${{ matrix.extension }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}  # Empty: the commit that started the run.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install . pyinstaller
+      - name: Install Qt runtime and cairo libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libcairo2
+      - name: Install cairo
+        if: runner.os == 'macOS'
+        run: brew install cairo
+      - name: Install cairo
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          release: false
+          install: mingw-w64-ucrt-x86_64-cairo
+
+      - name: Build
+        env:
+          MSYS2_BIN: ${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin
+        run: |
+          case "$RUNNER_OS" in
+            # Where the build (and its hook for cairocffi) looks for cairo and its DLLs.
+            Windows) export PATH="$PATH:$(cygpath -u "$MSYS2_BIN")" ;;
+            macOS) export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ;;
+          esac
+          pyinstaller --noconfirm packaging/labelgui.spec
+
+      - name: Smoke test
+        timeout-minutes: 5
+        env:
+          LABELGUI_SMOKE_TEST: "1"
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python packaging/make_sample_job.py "$RUNNER_TEMP/sample"
+          dist/labelgui/labelgui --help
+          dist/labelgui/labelgui "$RUNNER_TEMP/sample" --sync  # --sync alone: no MQTT broker.
+
+      - name: Package
+        working-directory: dist
+        run: |
+          case "$RUNNER_OS" in
+            Windows) pwsh -Command "Compress-Archive -Path labelgui -DestinationPath '$ARCHIVE'" ;;
+            macOS) ditto -c -k --keepParent labelgui "$ARCHIVE" ;;
+            *) tar -czf "$ARCHIVE" labelgui ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        if: env.RELEASE_TAG == ''
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: dist/${{ env.ARCHIVE }}
+          retention-days: 7
+      - name: Attach to the release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            gh release upload "$RELEASE_TAG" "dist/$ARCHIVE" --clobber && exit 0
+            echo "Upload attempt $attempt failed; retrying in $((attempt * 15)) s."
+            sleep $((attempt * 15))
+          done
+          exit 1

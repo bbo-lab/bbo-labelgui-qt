@@ -230,14 +230,26 @@ reference_trajectory_only_allowed_times: false
 reference_trajectory_allow_outside_times: false
 ```
 
-## Compiling to exe
-1. `conda activate bbo_labelgui_qt`.
-2. Install pyinstaller: `pip install pyinstaller.
-3. If present, empty `dist/` dirctory.
-4. `pyinstaller --onefile labelgui.py --hidden-import numpy.core.multiarray`
-5. Distribute exe file (or binary) in dist/ folder.
+## Standalone application
+Every tag builds one-folder applications for Windows, macOS (Apple Silicon) and
+Linux with PyInstaller (`.github/workflows/build.yml`) and attaches them as
+`labelgui-<tag>-<platform>` archives (`.zip`, or `.tar.gz` on Linux to keep the
+library symlinks) to the tag's GitHub release. Unpack an archive and run
+`labelgui/labelgui [options] INPUT_PATH` (`labelgui\labelgui.exe` on Windows)
+with the same options as `python -m labelgui`. The macOS build is not signed: clear
+the download quarantine with `xattr -dr com.apple.quarantine labelgui` first.
 
-Note: it is necessary to add **numpy.core.multiarray** as a hidden import as it is necessary for loading .npy sketch files.
+A manual run (Actions → Build application → Run workflow) builds without a
+release and keeps the archives as workflow artifacts for 7 days; given an
+existing tag, it builds that tag and attaches the archives to its release
+(e.g. when a tag's build failed).
+
+To build locally, install the package and PyInstaller, then run
+`pyinstaller --noconfirm packaging/labelgui.spec`; the application is in
+`dist/labelgui/`. SVG sketches need the native cairo library at build time
+(e.g. `apt install libcairo2`, `brew install cairo`, or MSYS2's
+`mingw-w64-ucrt-x86_64-cairo` on Windows); PyInstaller bundles it.
+
 ## Development
 
 Application logic lives in `labelgui/core`; Qt views bind to a `LabelingSession`.
