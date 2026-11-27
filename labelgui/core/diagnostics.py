@@ -2,7 +2,7 @@
 import numpy as np
 
 
-def format_frame_report(time, frames, annotations, references):
+def format_frame_report(time, frames, annotations, references, *, progress=None):
     """Describe stored points and their metadata, without generating guesses."""
     rows = [('Camera', 'Frame', 'Source', 'Label', 'X', 'Y', 'Labeler', 'Point time (Unix s)')]
     stores = [('labels', annotations)] + [(f'reference[{i}]', store) for i, store in enumerate(references)]
@@ -30,4 +30,6 @@ def format_frame_report(time, frames, annotations, references):
     if len(rows) == 1:
         table.append('(no stored labels on these frames)')
     camera_frames = ', '.join(f'camera {camera} = {frame}' for camera, frame in enumerate(frames))
+    if progress is not None:
+        camera_frames += f' ({progress:.1f}% through label times)'
     return f'Time: {time:.6f} s\nFrames: {camera_frames}\n' + '\n'.join(table)

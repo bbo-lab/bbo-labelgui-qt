@@ -234,10 +234,16 @@ class LabelingSession:
         if not logger.isEnabledFor(logging.INFO):
             return
         frames = tuple(self.frame_index(camera) for camera in range(len(self.cameras)))
-        state = (self.current_time, frames)
+        index = self.timeline.current_index
+        state = (self.current_time, frames, index)
         if state == self._last_logged_frame:
             return
-        logger.info('\n%s', format_frame_report(self.current_time, frames, self.annotations, self.references))
+        progress = None
+        if index is not None:
+            last_index = len(self.timeline.times) - 1
+            progress = 100 * index / last_index if last_index else 100.0
+        logger.info('\n%s', format_frame_report(self.current_time, frames, self.annotations, self.references,
+                                               progress=progress))
         self._last_logged_frame = state
 
     def frame_annotations(self, camera):
