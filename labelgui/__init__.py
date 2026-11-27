@@ -1,2 +1,2 @@
 """Guided video labeling. Import labelgui.ui explicitly to load the Qt interface."""
-__version__ = "0.2.1"
+__version__ = "0.2.2"
