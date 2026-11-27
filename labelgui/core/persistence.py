@@ -1,15 +1,35 @@
 """BBO label I/O and serialized background saves of immutable snapshots."""
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from contextlib import contextmanager
 from pathlib import Path
-from tempfile import TemporaryDirectory
 import os
 import logging
+import tempfile
 
 import numpy as np
 from bbo import label_lib
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _temporary_file(path, suffixes=()):
+    """Yield a unique hidden file next to path, removed with its suffix siblings on failure.
+
+    Writing beside the target keeps os.replace atomic. Temporary directories are avoided:
+    on Windows, Python 3.12.4+ restricts them to the current user, which on SMB shares can
+    leave a directory nobody can write into.
+    """
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.stem}-', suffix=path.suffix)
+    os.close(fd)
+    temporary = Path(name)
+    try:
+        yield temporary
+    except BaseException:
+        for leftover in {temporary, *(temporary.with_suffix(suffix) for suffix in suffixes)}:
+            leftover.unlink(missing_ok=True)
+        raise
 
 class LabelRepository:
     def load(self, path):
@@ -20,8 +40,7 @@ class LabelRepository:
         path.parent.mkdir(parents=True, exist_ok=True)
         # BBO writes YAML and a legacy NPZ companion. Replace each completed file;
         # the canonical YAML is never exposed partially written.
-        with TemporaryDirectory(dir=path.parent, prefix='.labels-') as directory:
-            temporary = Path(directory) / path.name
+        with _temporary_file(path, suffixes=('.npz',)) as temporary:
             label_lib.save(temporary, labels)
             for suffix in ('.npz', '.yml'):
                 source = temporary.with_suffix(suffix)
@@ -81,7 +100,6 @@ def save_resume_time(folder, time, *, time_index=None):
     status = np.load(path, allow_pickle=True)[()] if path.is_file() else {}
     status['i_time'] = time
     status['time_index'] = time_index
-    with TemporaryDirectory(dir=path.parent, prefix='.resume-') as directory:
-        temporary = Path(directory) / path.name
+    with _temporary_file(path) as temporary:
         np.save(temporary, status)
         os.replace(temporary, path)
